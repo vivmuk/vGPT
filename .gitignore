@@ -40,3 +40,13 @@ yarn-error.*
 *.lockb
 *.lock
 package-lock.json
+
+# ICO files that might cause issues
+*.ico
+
+# Build artifacts
+dist/
+build/
+
+# Netlify
+.netlify/
