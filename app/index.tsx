@@ -359,41 +359,32 @@ export default function ChatScreen() {
         {/* Metrics Section */}
         {msg.metrics && (
           <View style={styles.metricsContainer}>
-            <View style={styles.metricsGrid}>
-              <View style={styles.metricItem}>
-                <Text style={styles.metricLabel}>Model</Text>
-                <Text style={styles.metricValue}>{getModelDisplayName(msg.metrics.model)}</Text>
-              </View>
-              
-              <View style={styles.metricItem}>
-                <Text style={styles.metricLabel}>Input Tokens</Text>
-                <Text style={styles.metricValue}>{msg.metrics.inputTokens.toLocaleString()}</Text>
-              </View>
-              
-              <View style={styles.metricItem}>
-                <Text style={styles.metricLabel}>Output Tokens</Text>
-                <Text style={styles.metricValue}>{msg.metrics.outputTokens.toLocaleString()}</Text>
-              </View>
-              
-              <View style={styles.metricItem}>
-                <Text style={styles.metricLabel}>Total Tokens</Text>
-                <Text style={styles.metricValue}>{msg.metrics.totalTokens.toLocaleString()}</Text>
-              </View>
-              
-              <View style={styles.metricItem}>
-                <Text style={styles.metricLabel}>Speed</Text>
-                <Text style={styles.metricValue}>{msg.metrics.tokensPerSecond.toFixed(1)} tok/s</Text>
-              </View>
-              
-              <View style={styles.metricItem}>
-                <Text style={styles.metricLabel}>Time</Text>
-                <Text style={styles.metricValue}>{(msg.metrics.responseTime / 1000).toFixed(2)}s</Text>
-              </View>
-              
-              <View style={styles.metricItem}>
-                <Text style={styles.metricLabel}>Cost</Text>
-                <Text style={styles.metricValue}>${msg.metrics.cost.toFixed(6)}</Text>
-              </View>
+            {/* Header with model and timestamp */}
+            <View style={styles.metricsHeader}>
+              <Text style={styles.modelDisplayName}>{getModelDisplayName(msg.metrics.model)}</Text>
+              <Text style={styles.timestamp}>{new Date().toLocaleTimeString()}</Text>
+            </View>
+            
+            {/* Token Information */}
+            <View style={styles.tokenMetrics}>
+              <Text style={styles.tokenInfo}>
+                Input: <Text style={styles.inputTokens}>{msg.metrics.inputTokens.toLocaleString()}</Text>{" "}
+                Output: <Text style={styles.outputTokens}>{msg.metrics.outputTokens.toLocaleString()}</Text>{" "}
+                <Text style={styles.costDisplay}>${msg.metrics.cost.toFixed(3)}</Text>
+              </Text>
+            </View>
+            
+            {/* Performance metrics in compact row */}
+            <View style={styles.performanceRow}>
+              <Text style={styles.performanceMetric}>
+                ⭐ <Text style={styles.metricNumber}>{msg.metrics.tokensPerSecond.toFixed(1)}</Text> t/s
+              </Text>
+              <Text style={styles.performanceMetric}>
+                ⏱ <Text style={styles.metricNumber}>{(msg.metrics.responseTime / 1000).toFixed(1)}</Text>s
+              </Text>
+              <Text style={styles.performanceMetric}>
+                💰 <Text style={styles.metricNumber}>${msg.metrics.cost < 0.01 ? msg.metrics.cost.toFixed(4) : msg.metrics.cost.toFixed(3)}</Text>
+              </Text>
             </View>
           </View>
         )}
@@ -954,32 +945,60 @@ const styles = StyleSheet.create({
   },
   metricsContainer: {
     marginTop: 8,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: '#F8F9FA',
     borderRadius: 8,
-    padding: 12,
+    padding: 8,
     borderWidth: 1,
     borderColor: '#E5E7EB',
   },
-  metricsGrid: {
+  metricsHeader: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
   },
-  metricItem: {
-    minWidth: '30%',
-    flexBasis: '30%',
+  modelDisplayName: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '600',
   },
-  metricLabel: {
+  timestamp: {
+    fontSize: 11,
+    color: '#9CA3AF',
+  },
+  tokenMetrics: {
+    marginBottom: 6,
+  },
+  tokenInfo: {
+    fontSize: 12,
+    color: '#4B5563',
+    lineHeight: 16,
+  },
+  inputTokens: {
+    color: '#3B82F6',
+    fontWeight: '600',
+  },
+  outputTokens: {
+    color: '#10B981',
+    fontWeight: '600',
+  },
+  costDisplay: {
+    color: '#10B981',
+    fontWeight: '700',
+  },
+  performanceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  performanceMetric: {
     fontSize: 11,
     color: '#6B7280',
-    fontWeight: '500',
-    marginBottom: 2,
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
-  metricValue: {
-    fontSize: 13,
-    color: '#374151',
+  metricNumber: {
     fontWeight: '600',
+    color: '#374151',
   },
 });
