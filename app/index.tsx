@@ -369,8 +369,7 @@ export default function ChatScreen() {
             <View style={styles.tokenMetrics}>
               <Text style={styles.tokenInfo}>
                 Input: <Text style={styles.inputTokens}>{msg.metrics.inputTokens.toLocaleString()}</Text>{" "}
-                Output: <Text style={styles.outputTokens}>{msg.metrics.outputTokens.toLocaleString()}</Text>{" "}
-                <Text style={styles.costDisplay}>${msg.metrics.cost.toFixed(3)}</Text>
+                Output: <Text style={styles.outputTokens}>{msg.metrics.outputTokens.toLocaleString()}</Text>
               </Text>
             </View>
             
