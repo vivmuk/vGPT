@@ -12,8 +12,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { useQuery, useMutation, useAction } from 'convex/react';
-import { api } from '@/convex/_generated/api';
 import { Ionicons } from '@expo/vector-icons';
 import Slider from '@react-native-community/slider';
 import * as Haptics from 'expo-haptics';
@@ -50,13 +48,50 @@ interface VeniceModel {
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const settings = useQuery(api.settings.get);
-  const updateSettings = useMutation(api.settings.update);
-  const getModels = useAction(api.venice.getModels);
   
   const [models, setModels] = useState<VeniceModel[]>([]);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
+  
+  // Settings with localStorage persistence
+  const [settings, setSettings] = useState({
+    model: "llama-3.3-70b",
+    temperature: 0.7,
+    topP: 0.9,
+    minP: 0.05,
+    maxTokens: 2048,
+    topK: 40,
+    repetitionPenalty: 1.2,
+    webSearch: "auto" as const,
+    webCitations: true,
+    includeSearchResults: true,
+    stripThinking: false,
+    disableThinking: false,
+  });
+
+  // Load settings from localStorage on mount
+  useEffect(() => {
+    try {
+      const savedSettings = localStorage.getItem('vgpt-settings');
+      if (savedSettings) {
+        setSettings(JSON.parse(savedSettings));
+      }
+    } catch (error) {
+      console.error('Failed to load settings:', error);
+    }
+  }, []);
+
+  const updateSettings = (newSettings: Partial<typeof settings>) => {
+    const updatedSettings = { ...settings, ...newSettings };
+    setSettings(updatedSettings);
+    
+    // Save to localStorage
+    try {
+      localStorage.setItem('vgpt-settings', JSON.stringify(updatedSettings));
+    } catch (error) {
+      console.error('Failed to save settings:', error);
+    }
+  };
 
   useEffect(() => {
     loadModels();
@@ -65,8 +100,21 @@ export default function SettingsScreen() {
   const loadModels = async () => {
     setIsLoadingModels(true);
     try {
-      const modelData = await getModels();
-      setModels(modelData);
+      const apiKey = "ntmhtbP2fr_pOQsmuLPuN_nm6lm2INWKiNcvrdEfEC";
+      
+      const response = await fetch("https://api.venice.ai/api/v1/models", {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Venice API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      setModels(data.data || []);
     } catch (error) {
       console.error('Failed to load models:', error);
       Alert.alert('Error', 'Failed to load available models');
@@ -167,7 +215,7 @@ export default function SettingsScreen() {
     <TouchableOpacity
       style={[
         styles.modelItem,
-        settings?.model === item.id && styles.selectedModelItem
+        settings.model === item.id && styles.selectedModelItem
       ]}
       onPress={() => handleModelSelect(item.id)}
     >
@@ -210,21 +258,13 @@ export default function SettingsScreen() {
         </Text>
       </View>
       
-      {settings?.model === item.id && (
+      {settings.model === item.id && (
         <Ionicons name="checkmark-circle" size={24} color="#4CAF50" />
       )}
     </TouchableOpacity>
   );
 
-  if (!settings) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.loadingContainer}>
-          <Text>Loading settings...</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
+
 
   return (
     <SafeAreaView style={styles.container}>
