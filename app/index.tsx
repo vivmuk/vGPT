@@ -12,6 +12,7 @@ import {
   Modal,
   FlatList
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,6 +22,16 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   id: string;
+  thinking?: string;
+  metrics?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    cost: number;
+    tokensPerSecond: number;
+    responseTime: number;
+    model: string;
+  };
 }
 
 interface VeniceModel {
@@ -69,7 +80,7 @@ export default function ChatScreen() {
     temperature: 0.7,
     topP: 0.9,
     minP: 0.05,
-    maxTokens: 2048,
+    maxTokens: 4096, // Increased for longer responses
     topK: 40,
     repetitionPenalty: 1.2,
     webSearch: "auto" as const,
@@ -166,6 +177,9 @@ export default function ChatScreen() {
     setIsLoading(true);
 
     try {
+      // Track timing
+      const startTime = Date.now();
+      
       // Prepare conversation history
       const conversationHistory = [
         ...messages.map(msg => ({
@@ -190,7 +204,7 @@ export default function ChatScreen() {
         stream: false,
         venice_parameters: {
           character_slug: "venice",
-          strip_thinking_response: settings.stripThinking,
+          strip_thinking_response: false, // Always get thinking for separation
           disable_thinking: settings.disableThinking,
           enable_web_search: settings.webSearch,
           enable_web_citations: settings.webCitations,
@@ -214,12 +228,52 @@ export default function ChatScreen() {
       }
 
       const data = await response.json();
+      const endTime = Date.now();
+      const responseTime = endTime - startTime;
       
-      // Add AI response
+      // Extract content and thinking
+      const fullContent = data.choices[0]?.message?.content || "Sorry, I couldn't generate a response.";
+      let thinking = "";
+      let content = fullContent;
+      
+      // Parse thinking if present
+      if (fullContent.includes("<think>") && fullContent.includes("</think>")) {
+        const thinkMatch = fullContent.match(/<think>([\s\S]*?)<\/think>/);
+        if (thinkMatch) {
+          thinking = thinkMatch[1].trim();
+          content = fullContent.replace(/<think>[\s\S]*?<\/think>/, "").trim();
+        }
+      }
+      
+      // Calculate metrics
+      const usage = data.usage || {};
+      const inputTokens = usage.prompt_tokens || 0;
+      const outputTokens = usage.completion_tokens || 0;
+      const totalTokens = usage.total_tokens || inputTokens + outputTokens;
+      
+      // Find current model for pricing
+      const currentModel = models.find(m => m.id === settings.model);
+      const inputCost = currentModel ? (inputTokens / 1000000) * currentModel.model_spec.pricing.input.usd : 0;
+      const outputCost = currentModel ? (outputTokens / 1000000) * currentModel.model_spec.pricing.output.usd : 0;
+      const totalCost = inputCost + outputCost;
+      
+      const tokensPerSecond = outputTokens > 0 ? (outputTokens / (responseTime / 1000)) : 0;
+      
+      // Add AI response with metrics
       const aiMessage: Message = {
         role: 'assistant',
-        content: data.choices[0]?.message?.content || "Sorry, I couldn't generate a response.",
+        content: content,
+        thinking: thinking,
         id: (Date.now() + 1).toString(),
+        metrics: {
+          inputTokens,
+          outputTokens,
+          totalTokens,
+          cost: totalCost,
+          tokensPerSecond,
+          responseTime,
+          model: settings.model,
+        },
       };
 
       setMessages(prev => [...prev, aiMessage]);
@@ -240,25 +294,109 @@ export default function ChatScreen() {
     return model?.model_spec.name || modelId;
   };
 
+  const copyToClipboard = async (text: string) => {
+    try {
+      await Clipboard.setStringAsync(text);
+      if (Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+      Alert.alert('Copied!', 'Response copied to clipboard');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to copy to clipboard');
+    }
+  };
+
   const renderMessage = (msg: Message, index: number) => {
     const isUser = msg.role === 'user';
     
+    if (isUser) {
+      return (
+        <View key={msg.id} style={[
+          styles.messageContainer,
+          styles.userMessageContainer
+        ]}>
+          <View style={[styles.messageBubble, styles.userBubble]}>
+            <Text style={[styles.messageText, styles.userText]}>
+              {msg.content}
+            </Text>
+          </View>
+        </View>
+      );
+    }
+
+    // Assistant message with enhanced formatting
     return (
       <View key={msg.id} style={[
         styles.messageContainer,
-        isUser ? styles.userMessageContainer : styles.assistantMessageContainer
+        styles.assistantMessageContainer
       ]}>
-        <View style={[
-          styles.messageBubble,
-          isUser ? styles.userBubble : styles.assistantBubble
-        ]}>
-          <Text style={[
-            styles.messageText,
-            isUser ? styles.userText : styles.assistantText
-          ]}>
+        {/* Thinking Section */}
+        {msg.thinking && (
+          <View style={styles.thinkingContainer}>
+            <View style={styles.thinkingHeader}>
+              <Ionicons name="bulb-outline" size={16} color="#9CA3AF" />
+              <Text style={styles.thinkingLabel}>Thinking</Text>
+            </View>
+            <Text style={styles.thinkingText}>{msg.thinking}</Text>
+          </View>
+        )}
+
+        {/* Main Response */}
+        <View style={[styles.messageBubble, styles.assistantBubble]}>
+          <Text style={[styles.messageText, styles.assistantText]}>
             {msg.content}
           </Text>
+          
+          {/* Copy Button */}
+          <TouchableOpacity 
+            style={styles.copyButton}
+            onPress={() => copyToClipboard(msg.content)}
+          >
+            <Ionicons name="copy-outline" size={16} color="#6B7280" />
+          </TouchableOpacity>
         </View>
+
+        {/* Metrics Section */}
+        {msg.metrics && (
+          <View style={styles.metricsContainer}>
+            <View style={styles.metricsGrid}>
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>Model</Text>
+                <Text style={styles.metricValue}>{getModelDisplayName(msg.metrics.model)}</Text>
+              </View>
+              
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>Input Tokens</Text>
+                <Text style={styles.metricValue}>{msg.metrics.inputTokens.toLocaleString()}</Text>
+              </View>
+              
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>Output Tokens</Text>
+                <Text style={styles.metricValue}>{msg.metrics.outputTokens.toLocaleString()}</Text>
+              </View>
+              
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>Total Tokens</Text>
+                <Text style={styles.metricValue}>{msg.metrics.totalTokens.toLocaleString()}</Text>
+              </View>
+              
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>Speed</Text>
+                <Text style={styles.metricValue}>{msg.metrics.tokensPerSecond.toFixed(1)} tok/s</Text>
+              </View>
+              
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>Time</Text>
+                <Text style={styles.metricValue}>{(msg.metrics.responseTime / 1000).toFixed(2)}s</Text>
+              </View>
+              
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>Cost</Text>
+                <Text style={styles.metricValue}>${msg.metrics.cost.toFixed(6)}</Text>
+              </View>
+            </View>
+          </View>
+        )}
       </View>
     );
   };
@@ -281,15 +419,15 @@ export default function ChatScreen() {
           </View>
           
           <View style={styles.headerRight}>
-            <TouchableOpacity 
-              style={styles.modelSelector}
+          <TouchableOpacity 
+            style={styles.modelSelector}
               onPress={() => setShowModelPicker(true)}
-            >
-              <Text style={styles.modelText}>
+          >
+            <Text style={styles.modelText}>
                 {getModelDisplayName(settings.model)}
-              </Text>
-              <Ionicons name="chevron-down" size={16} color="#FF6B47" />
-            </TouchableOpacity>
+            </Text>
+            <Ionicons name="chevron-down" size={16} color="#FF6B47" />
+          </TouchableOpacity>
 
             <TouchableOpacity 
               style={styles.settingsButton}
@@ -298,12 +436,12 @@ export default function ChatScreen() {
               <Ionicons name="settings" size={20} color="#FF6B47" />
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={styles.newChatButton}
-              onPress={handleNewChat}
-            >
-              <Ionicons name="add" size={24} color="#FF6B47" />
-            </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.newChatButton}
+            onPress={handleNewChat}
+          >
+            <Ionicons name="add" size={24} color="#FF6B47" />
+          </TouchableOpacity>
           </View>
         </View>
 
@@ -317,7 +455,7 @@ export default function ChatScreen() {
           {messages.length === 0 ? (
             <View style={styles.welcomeContainer}>
               <View style={styles.welcomeIconContainer}>
-                <Text style={styles.welcomeIcon}>✨</Text>
+              <Text style={styles.welcomeIcon}>✨</Text>
                 <Text style={styles.sparkleIcon}>✨</Text>
               </View>
               <Text style={styles.welcomeTitle}>Ready to chat!</Text>
@@ -596,6 +734,8 @@ const styles = StyleSheet.create({
     elevation: 2,
     borderWidth: 1,
     borderColor: '#F0F0F0',
+    position: 'relative',
+    paddingTop: 16, // Extra padding for copy button
   },
   messageText: {
     fontSize: 16,
@@ -775,5 +915,71 @@ const styles = StyleSheet.create({
   pricingText: {
     fontSize: 12,
     color: '#666',
+  },
+  // New styles for enhanced message display
+  thinkingContainer: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#E5E7EB',
+  },
+  thinkingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  thinkingLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#9CA3AF',
+    marginLeft: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  thinkingText: {
+    fontSize: 14,
+    color: '#6B7280',
+    lineHeight: 20,
+    fontStyle: 'italic',
+  },
+  copyButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+  },
+  metricsContainer: {
+    marginTop: 8,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  metricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  metricItem: {
+    minWidth: '30%',
+    flexBasis: '30%',
+  },
+  metricLabel: {
+    fontSize: 11,
+    color: '#6B7280',
+    fontWeight: '500',
+    marginBottom: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  metricValue: {
+    fontSize: 13,
+    color: '#374151',
+    fontWeight: '600',
   },
 });

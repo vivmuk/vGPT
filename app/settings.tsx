@@ -59,7 +59,7 @@ export default function SettingsScreen() {
     temperature: 0.7,
     topP: 0.9,
     minP: 0.05,
-    maxTokens: 2048,
+    maxTokens: 4096, // Increased for longer responses
     topK: 40,
     repetitionPenalty: 1.2,
     webSearch: "auto" as const,
@@ -336,7 +336,7 @@ export default function SettingsScreen() {
         {renderSliderSetting('Temperature', '🌡️', settings.temperature, 0, 2, 0.01, 'temperature')}
         {renderSliderSetting('Top P', '🎯', settings.topP, 0, 1, 0.01, 'topP')}
         {renderSliderSetting('Min P', '📊', settings.minP, 0, 1, 0.01, 'minP')}
-        {renderSliderSetting('Max Tokens', '📝', settings.maxTokens, 1, 4096, 1, 'maxTokens', '#4CAF50')}
+        {renderSliderSetting('Max Tokens', '📝', settings.maxTokens, 1, 8192, 1, 'maxTokens', '#4CAF50')}
         {renderSliderSetting('Top K', '🔢', settings.topK, 1, 100, 1, 'topK', '#9C27B0')}
         {renderSliderSetting('Repetition Penalty', '🔄', settings.repetitionPenalty, 0.5, 2, 0.01, 'repetitionPenalty', '#FF9800')}
       </ScrollView>
