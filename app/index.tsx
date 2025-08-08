@@ -1,22 +1,24 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback, memo } from 'react';
 import { 
   View, 
   Text, 
   StyleSheet, 
   TextInput, 
   TouchableOpacity, 
-  ScrollView,
   KeyboardAvoidingView,
   Platform,
   Alert,
   Modal,
-  FlatList
+  FlatList,
+  ActivityIndicator
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+// Hardcoded API key in code as requested
+import { BlurView } from 'expo-blur';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -72,7 +74,7 @@ export default function ChatScreen() {
   const [models, setModels] = useState<VeniceModel[]>([]);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
-  const scrollViewRef = useRef<ScrollView>(null);
+  const flatListRef = useRef<FlatList<Message>>(null);
   
   // Settings with localStorage persistence
   const [settings, setSettings] = useState({
@@ -115,11 +117,15 @@ export default function ChatScreen() {
   };
 
   useEffect(() => {
-    // Scroll to bottom when new messages arrive
     if (messages.length > 0) {
-      setTimeout(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      }, 100);
+      const timeoutId = setTimeout(() => {
+        try {
+          flatListRef.current?.scrollToIndex({ index: Math.max(0, messages.length - 1), animated: true });
+        } catch {
+          // ignore out-of-range errors; onContentSizeChange will also scroll
+        }
+      }, 50);
+      return () => clearTimeout(timeoutId);
     }
   }, [messages.length]);
 
@@ -172,7 +178,7 @@ export default function ChatScreen() {
       id: Date.now().toString(),
     };
 
-    setMessages(prev => [...prev, newUserMessage]);
+    setMessages((prev: Message[]) => [...prev, newUserMessage]);
     setMessage('');
     setIsLoading(true);
 
@@ -182,7 +188,7 @@ export default function ChatScreen() {
       
       // Prepare conversation history
       const conversationHistory = [
-        ...messages.map(msg => ({
+        ...messages.map((msg: Message) => ({
           role: msg.role,
           content: msg.content,
         })),
@@ -252,7 +258,7 @@ export default function ChatScreen() {
       const totalTokens = usage.total_tokens || inputTokens + outputTokens;
       
       // Find current model for pricing
-      const currentModel = models.find(m => m.id === settings.model);
+      const currentModel = models.find((m: VeniceModel) => m.id === settings.model);
       const inputCost = currentModel ? (inputTokens / 1000000) * currentModel.model_spec.pricing.input.usd : 0;
       const outputCost = currentModel ? (outputTokens / 1000000) * currentModel.model_spec.pricing.output.usd : 0;
       const totalCost = inputCost + outputCost;
@@ -276,7 +282,7 @@ export default function ChatScreen() {
         },
       };
 
-      setMessages(prev => [...prev, aiMessage]);
+      setMessages((prev: Message[]) => [...prev, aiMessage]);
     } catch (error) {
       console.error('Error sending message:', error);
       Alert.alert('Error', 'Failed to send message. Please try again.');
@@ -289,10 +295,15 @@ export default function ChatScreen() {
     setMessages([]);
   };
 
-  const getModelDisplayName = (modelId: string) => {
-    const model = models.find(m => m.id === modelId);
-    return model?.model_spec.name || modelId;
-  };
+  const modelIdToName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of models) map.set(m.id, m.model_spec.name);
+    return map;
+  }, [models]);
+
+  const getModelDisplayName = useCallback((modelId: string) => {
+    return modelIdToName.get(modelId) || modelId;
+  }, [modelIdToName]);
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -306,12 +317,12 @@ export default function ChatScreen() {
     }
   };
 
-  const renderMessage = (msg: Message, index: number) => {
+  const renderMessage = useCallback((msg: Message) => {
     const isUser = msg.role === 'user';
     
     if (isUser) {
       return (
-        <View key={msg.id} style={[
+        <View style={[
           styles.messageContainer,
           styles.userMessageContainer
         ]}>
@@ -326,7 +337,7 @@ export default function ChatScreen() {
 
     // Assistant message with enhanced formatting
     return (
-      <View key={msg.id} style={[
+      <View style={[
         styles.messageContainer,
         styles.assistantMessageContainer
       ]}>
@@ -389,7 +400,11 @@ export default function ChatScreen() {
         )}
       </View>
     );
-  };
+  }, [copyToClipboard, getModelDisplayName]);
+
+  const MessageItem = memo(({ item }: { item: Message }) => {
+    return renderMessage(item);
+  });
 
 
 
@@ -400,7 +415,7 @@ export default function ChatScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         {/* Header */}
-        <View style={styles.header}>
+        <BlurView intensity={40} tint="light" style={styles.header}>
           <View style={styles.headerLeft}>
             <View style={styles.logoContainer}>
               <Text style={styles.logoIcon}>✨</Text>
@@ -409,43 +424,47 @@ export default function ChatScreen() {
           </View>
           
           <View style={styles.headerRight}>
-          <TouchableOpacity 
-            style={styles.modelSelector}
+            <TouchableOpacity 
+              style={styles.modelSelector}
               onPress={() => setShowModelPicker(true)}
-          >
-            <Text style={styles.modelText}>
+              activeOpacity={0.8}
+            >
+              <Text style={styles.modelText}>
                 {getModelDisplayName(settings.model)}
-            </Text>
-            <Ionicons name="chevron-down" size={16} color="#FF6B47" />
-          </TouchableOpacity>
+              </Text>
+              <Ionicons name="chevron-down" size={16} color="#FF6B47" />
+            </TouchableOpacity>
 
             <TouchableOpacity 
               style={styles.settingsButton}
               onPress={() => router.push('/settings')}
+              activeOpacity={0.8}
             >
               <Ionicons name="settings" size={20} color="#FF6B47" />
             </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={styles.newChatButton}
-            onPress={handleNewChat}
-          >
-            <Ionicons name="add" size={24} color="#FF6B47" />
-          </TouchableOpacity>
+            <TouchableOpacity 
+              style={styles.newChatButton}
+              onPress={handleNewChat}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="add" size={24} color="#FF6B47" />
+            </TouchableOpacity>
           </View>
-        </View>
+        </BlurView>
 
         {/* Messages */}
-        <ScrollView 
-          ref={scrollViewRef}
+        <FlatList
+          ref={flatListRef}
+          data={messages}
           style={styles.messagesContainer}
+          keyExtractor={(item: Message) => item.id}
+          renderItem={({ item }: { item: Message }) => <MessageItem item={item} />}
           contentContainerStyle={messages.length === 0 ? styles.emptyState : styles.messagesContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {messages.length === 0 ? (
+          ListEmptyComponent={
             <View style={styles.welcomeContainer}>
               <View style={styles.welcomeIconContainer}>
-              <Text style={styles.welcomeIcon}>✨</Text>
+                <Text style={styles.welcomeIcon}>✨</Text>
                 <Text style={styles.sparkleIcon}>✨</Text>
               </View>
               <Text style={styles.welcomeTitle}>Ready to chat!</Text>
@@ -453,25 +472,27 @@ export default function ChatScreen() {
                 Send a message to start the conversation with {getModelDisplayName(settings.model)}
               </Text>
             </View>
-          ) : (
-            messages.map((msg, index) => renderMessage(msg, index))
-          )}
-          
-          {isLoading && (
-            <View style={styles.loadingMessage}>
-              <View style={styles.assistantBubble}>
-                <View style={styles.typingIndicator}>
-                  <View style={[styles.typingDot, { animationDelay: '0ms' }]} />
-                  <View style={[styles.typingDot, { animationDelay: '150ms' }]} />
-                  <View style={[styles.typingDot, { animationDelay: '300ms' }]} />
+          }
+          ListFooterComponent={
+            isLoading ? (
+              <View style={styles.loadingMessage}>
+                <View style={[styles.assistantBubble, { alignSelf: 'flex-start' }]}>
+                  <ActivityIndicator size="small" color="#9CA3AF" />
                 </View>
               </View>
-            </View>
-          )}
-        </ScrollView>
+            ) : null
+          }
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          removeClippedSubviews
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={5}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+        />
 
         {/* Input */}
-        <View style={styles.inputContainer}>
+        <BlurView intensity={30} tint="light" style={styles.inputContainer}>
           <View style={styles.inputWrapper}>
             <TextInput
               style={styles.textInput}
@@ -482,6 +503,8 @@ export default function ChatScreen() {
               multiline
               maxLength={4000}
               editable={!isLoading}
+              autoCorrect
+              autoCapitalize="sentences"
             />
             <TouchableOpacity
               style={[
@@ -490,11 +513,12 @@ export default function ChatScreen() {
               ]}
               onPress={handleSend}
               disabled={!message.trim() || isLoading}
+              activeOpacity={0.8}
             >
               <Ionicons name="arrow-up" size={20} color="white" />
             </TouchableOpacity>
           </View>
-        </View>
+        </BlurView>
       </KeyboardAvoidingView>
 
       {/* Model Picker Modal */}
@@ -519,7 +543,7 @@ export default function ChatScreen() {
           ) : (
             <FlatList
               data={models}
-              renderItem={({ item }) => (
+                renderItem={({ item }: { item: VeniceModel }) => (
                 <TouchableOpacity
                   style={[
                     styles.modelItem,
@@ -571,7 +595,7 @@ export default function ChatScreen() {
                   )}
                 </TouchableOpacity>
               )}
-              keyExtractor={(item) => item.id}
+              keyExtractor={(item: VeniceModel) => item.id}
               contentContainerStyle={styles.modelList}
             />
           )}

@@ -140,7 +140,7 @@ export default function SettingsScreen() {
   };
 
   const getModelDisplayName = (modelId: string) => {
-    const model = models.find(m => m.id === modelId);
+    const model = models.find((m: VeniceModel) => m.id === modelId);
     return model?.model_spec.name || modelId;
   };
 
@@ -195,7 +195,7 @@ export default function SettingsScreen() {
           maximumValue={max}
           step={step}
           value={value}
-          onValueChange={(val) => handleSliderChange(key, val)}
+          onValueChange={(val: number) => handleSliderChange(key, val)}
           minimumTrackTintColor={color}
           maximumTrackTintColor="#E0E0E0"
           thumbStyle={{ backgroundColor: color }}
@@ -364,7 +364,7 @@ export default function SettingsScreen() {
             <FlatList
               data={models}
               renderItem={renderModelItem}
-              keyExtractor={(item) => item.id}
+              keyExtractor={(item: VeniceModel) => item.id}
               contentContainerStyle={styles.modelList}
             />
           )}
