@@ -172,6 +172,7 @@ export default function ChatScreen() {
 
   const pickImageFromLibrary = async () => {
     try {
+      console.log('📷 Launching image picker from library...');
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
         Alert.alert('Permission needed', 'Please allow photo library access to attach images.');
@@ -182,32 +183,40 @@ export default function ChatScreen() {
         allowsMultipleSelection: false,
         quality: 0.8,
       });
+      console.log('📷 Image picker result:', result);
       if (!result.canceled) {
         const asset = result.assets[0];
         const mimeType = asset.mimeType || 'image/jpeg';
+        console.log('📷 Adding image to attachments:', asset.uri);
         setAttachedImages((prev: { uri: string; mimeType: string }[]) => [...prev, { uri: asset.uri, mimeType }]);
       }
     } catch (err) {
+      console.error('📷 Error picking image:', err);
       Alert.alert('Error', 'Failed to pick image');
     }
   };
 
   const takePhotoWithCamera = async () => {
     try {
+      console.log('📸 Launching camera...');
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
         Alert.alert('Permission needed', 'Please allow camera access to take a photo.');
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaType.Images,
         quality: 0.8,
       });
+      console.log('📸 Camera result:', result);
       if (!result.canceled) {
         const asset = result.assets[0];
         const mimeType = asset.mimeType || 'image/jpeg';
+        console.log('📸 Adding photo to attachments:', asset.uri);
         setAttachedImages((prev: { uri: string; mimeType: string }[]) => [...prev, { uri: asset.uri, mimeType }]);
       }
     } catch (err) {
+      console.error('📸 Error taking photo:', err);
       Alert.alert('Error', 'Failed to take photo');
     }
   };
@@ -515,30 +524,46 @@ export default function ChatScreen() {
     const dot1 = useRef(new Animated.Value(0)).current;
     const dot2 = useRef(new Animated.Value(0)).current;
     const dot3 = useRef(new Animated.Value(0)).current;
+    const rotation = useRef(new Animated.Value(0)).current;
 
     useEffect(() => {
-      const createAnimation = (value: Animated.Value, delay: number) =>
+      const createDotAnimation = (value: Animated.Value, delay: number) =>
         Animated.loop(
           Animated.sequence([
-            Animated.timing(value, { toValue: 1, duration: 400, delay, useNativeDriver: true, easing: Easing.inOut(Easing.quad) }),
-            Animated.timing(value, { toValue: 0, duration: 400, useNativeDriver: true, easing: Easing.inOut(Easing.quad) }),
+            Animated.timing(value, { toValue: 1, duration: 600, delay, useNativeDriver: true, easing: Easing.bezier(0.68, -0.55, 0.265, 1.55) }),
+            Animated.timing(value, { toValue: 0, duration: 600, useNativeDriver: true, easing: Easing.bezier(0.68, -0.55, 0.265, 1.55) }),
           ])
-        ).start();
+        );
 
-      createAnimation(dot1, 0);
-      createAnimation(dot2, 150);
-      createAnimation(dot3, 300);
-    }, [dot1, dot2, dot3]);
+      const createRotationAnimation = () =>
+        Animated.loop(
+          Animated.timing(rotation, {
+            toValue: 1,
+            duration: 2000,
+            useNativeDriver: true,
+            easing: Easing.linear,
+          })
+        );
 
-    const renderDot = (value: Animated.Value) => (
+      createDotAnimation(dot1, 0).start();
+      createDotAnimation(dot2, 200).start();
+      createDotAnimation(dot3, 400).start();
+      createRotationAnimation().start();
+    }, [dot1, dot2, dot3, rotation]);
+
+    const renderDot = (value: Animated.Value, color: string, delay: number) => (
       <Animated.View
         style={[
           styles.typingDot,
           {
-            opacity: value.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }),
+            backgroundColor: color,
+            opacity: value.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }),
             transform: [
               {
-                translateY: value.interpolate({ inputRange: [0, 1], outputRange: [0, -3] }),
+                scale: value.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1.2] }),
+              },
+              {
+                translateY: value.interpolate({ inputRange: [0, 1], outputRange: [0, -6] }),
               },
             ],
           },
@@ -547,11 +572,25 @@ export default function ChatScreen() {
     );
 
     return (
-      <View style={styles.typingIndicator}>
-        {renderDot(dot1)}
-        {renderDot(dot2)}
-        {renderDot(dot3)}
-      </View>
+      <Animated.View 
+        style={[
+          styles.typingIndicator,
+          {
+            transform: [
+              {
+                rotate: rotation.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: ['0deg', '360deg'],
+                }),
+              },
+            ],
+          },
+        ]}
+      >
+        {renderDot(dot1, '#FF6B47', 0)}
+        {renderDot(dot2, '#10B981', 200)}
+        {renderDot(dot3, '#3B82F6', 400)}
+      </Animated.View>
     );
   };
 
@@ -943,10 +982,15 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   typingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#CCC',
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#FF6B47',
+    shadowColor: '#FF6B47',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 2,
   },
   attachmentsBar: {
     flexDirection: 'row',
