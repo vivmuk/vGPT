@@ -178,7 +178,7 @@ export default function ChatScreen() {
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ImagePicker.MediaType.Images,
         allowsMultipleSelection: false,
         quality: 0.8,
       });
@@ -276,7 +276,7 @@ export default function ChatScreen() {
         }
         currentUserContent = [
           { type: 'text', text: userMessage },
-          ...imagesWithDataUrls.map(img => ({ type: 'image_url', image_url: img.dataUrl }))
+          ...imagesWithDataUrls.map(img => ({ type: 'image_url', image_url: { url: img.dataUrl } }))
         ];
         conversationHistory.push({ role: 'user' as const, content: currentUserContent });
       } else {
