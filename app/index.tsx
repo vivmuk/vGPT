@@ -13,18 +13,23 @@ import {
   ActivityIndicator
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 // Hardcoded API key in code as requested
 import { BlurView } from 'expo-blur';
+import { Animated, Easing } from 'react-native';
 
 interface Message {
   role: 'user' | 'assistant';
   content: string;
   id: string;
   thinking?: string;
+  images?: { uri: string; mimeType: string; dataUrl?: string }[];
   metrics?: {
     inputTokens: number;
     outputTokens: number;
@@ -75,6 +80,7 @@ export default function ChatScreen() {
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const flatListRef = useRef<FlatList<Message>>(null);
+  const [attachedImages, setAttachedImages] = useState<{ uri: string; mimeType: string }[]>([]);
   
   // Settings with localStorage persistence
   const [settings, setSettings] = useState({
@@ -164,6 +170,52 @@ export default function ChatScreen() {
     setShowModelPicker(false);
   };
 
+  const pickImageFromLibrary = async () => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permission needed', 'Please allow photo library access to attach images.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsMultipleSelection: false,
+        quality: 0.8,
+      });
+      if (!result.canceled) {
+        const asset = result.assets[0];
+        const mimeType = asset.mimeType || 'image/jpeg';
+        setAttachedImages((prev: { uri: string; mimeType: string }[]) => [...prev, { uri: asset.uri, mimeType }]);
+      }
+    } catch (err) {
+      Alert.alert('Error', 'Failed to pick image');
+    }
+  };
+
+  const takePhotoWithCamera = async () => {
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permission needed', 'Please allow camera access to take a photo.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        quality: 0.8,
+      });
+      if (!result.canceled) {
+        const asset = result.assets[0];
+        const mimeType = asset.mimeType || 'image/jpeg';
+        setAttachedImages((prev: { uri: string; mimeType: string }[]) => [...prev, { uri: asset.uri, mimeType }]);
+      }
+    } catch (err) {
+      Alert.alert('Error', 'Failed to take photo');
+    }
+  };
+
+  const removeAttachedImage = (uri: string) => {
+    setAttachedImages((prev: { uri: string; mimeType: string }[]) => prev.filter((img: { uri: string; mimeType: string }) => img.uri !== uri));
+  };
+
   const handleSend = async () => {
     if (!message.trim() || isLoading) return;
 
@@ -176,6 +228,7 @@ export default function ChatScreen() {
       role: 'user',
       content: userMessage,
       id: Date.now().toString(),
+      images: attachedImages.length ? attachedImages : undefined,
     };
 
     setMessages((prev: Message[]) => [...prev, newUserMessage]);
@@ -187,13 +240,48 @@ export default function ChatScreen() {
       const startTime = Date.now();
       
       // Prepare conversation history
-      const conversationHistory = [
-        ...messages.map((msg: Message) => ({
-          role: msg.role,
-          content: msg.content,
-        })),
-        { role: 'user' as const, content: userMessage }
+      const conversationHistory: any[] = [
+        ...messages.map((msg: Message) => {
+          if (msg.role === 'user' && msg.images && msg.images.length > 0) {
+            // Represent prior user messages with images as multimodal parts
+            return {
+              role: 'user',
+              content: [
+                { type: 'text', text: msg.content },
+                ...msg.images.map(img => ({ type: 'image_url', image_url: img.dataUrl || img.uri }))
+              ]
+            };
+          }
+          return { role: msg.role, content: msg.content };
+        }),
       ];
+
+      // Attach current images if any
+      let currentUserContent: any = userMessage;
+      if (attachedImages.length > 0) {
+        // Warn if model may not support vision
+        const currentModelVision = models.find((m: VeniceModel) => m.id === settings.model)?.model_spec.capabilities.supportsVision;
+        if (!currentModelVision) {
+          Alert.alert('Model limitation', 'The selected model may not support images. The request will still be sent, but it may be ignored by the model.');
+        }
+        // Convert images to data URLs
+        const imagesWithDataUrls: { uri: string; mimeType: string; dataUrl: string }[] = [];
+        for (const img of attachedImages) {
+          try {
+            const base64 = await FileSystem.readAsStringAsync(img.uri, { encoding: FileSystem.EncodingType.Base64 });
+            imagesWithDataUrls.push({ uri: img.uri, mimeType: img.mimeType, dataUrl: `data:${img.mimeType};base64,${base64}` });
+          } catch (e) {
+            imagesWithDataUrls.push({ uri: img.uri, mimeType: img.mimeType, dataUrl: img.uri });
+          }
+        }
+        currentUserContent = [
+          { type: 'text', text: userMessage },
+          ...imagesWithDataUrls.map(img => ({ type: 'image_url', image_url: img.dataUrl }))
+        ];
+        conversationHistory.push({ role: 'user' as const, content: currentUserContent });
+      } else {
+        conversationHistory.push({ role: 'user' as const, content: userMessage });
+      }
 
       // Direct Venice AI API call
       const apiKey = "ntmhtbP2fr_pOQsmuLPuN_nm6lm2INWKiNcvrdEfEC";
@@ -219,6 +307,13 @@ export default function ChatScreen() {
         },
       };
 
+      // Timeout: extend generously for reasoning models
+      const currentModelForTimeout = models.find((m: VeniceModel) => m.id === settings.model);
+      const supportsReasoning = currentModelForTimeout?.model_spec.capabilities.supportsReasoning;
+      const requestTimeoutMs = supportsReasoning ? 10 * 60 * 1000 : 2 * 60 * 1000; // 10 min for reasoning, 2 min otherwise
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
+
       const response = await fetch("https://api.venice.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -226,7 +321,9 @@ export default function ChatScreen() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(requestBody),
+        signal: controller.signal as any,
       });
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -288,6 +385,7 @@ export default function ChatScreen() {
       Alert.alert('Error', 'Failed to send message. Please try again.');
     } finally {
       setIsLoading(false);
+      setAttachedImages([]);
     }
   };
 
@@ -331,6 +429,13 @@ export default function ChatScreen() {
               {msg.content}
             </Text>
           </View>
+          {msg.images && msg.images.length > 0 && (
+            <View style={styles.sentImagesRow}>
+              {msg.images.map((img: { uri: string; mimeType: string; dataUrl?: string }) => (
+                <Image key={img.uri} source={{ uri: img.uri }} style={styles.sentImage} contentFit="cover" />
+              ))}
+            </View>
+          )}
         </View>
       );
     }
@@ -406,7 +511,53 @@ export default function ChatScreen() {
     return renderMessage(item);
   });
 
+  const TypingIndicator: React.FC = () => {
+    const dot1 = useRef(new Animated.Value(0)).current;
+    const dot2 = useRef(new Animated.Value(0)).current;
+    const dot3 = useRef(new Animated.Value(0)).current;
 
+    useEffect(() => {
+      const createAnimation = (value: Animated.Value, delay: number) =>
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(value, { toValue: 1, duration: 400, delay, useNativeDriver: true, easing: Easing.inOut(Easing.quad) }),
+            Animated.timing(value, { toValue: 0, duration: 400, useNativeDriver: true, easing: Easing.inOut(Easing.quad) }),
+          ])
+        ).start();
+
+      createAnimation(dot1, 0);
+      createAnimation(dot2, 150);
+      createAnimation(dot3, 300);
+    }, [dot1, dot2, dot3]);
+
+    const renderDot = (value: Animated.Value) => (
+      <Animated.View
+        style={[
+          styles.typingDot,
+          {
+            opacity: value.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }),
+            transform: [
+              {
+                translateY: value.interpolate({ inputRange: [0, 1], outputRange: [0, -3] }),
+              },
+            ],
+          },
+        ]}
+      />
+    );
+
+    return (
+      <View style={styles.typingIndicator}>
+        {renderDot(dot1)}
+        {renderDot(dot2)}
+        {renderDot(dot3)}
+      </View>
+    );
+  };
+
+  const ImagePreview: React.FC<{ uri: string }> = ({ uri }: { uri: string }) => {
+    return <Image source={{ uri }} style={styles.attachmentImage} contentFit="cover" />;
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -477,7 +628,7 @@ export default function ChatScreen() {
             isLoading ? (
               <View style={styles.loadingMessage}>
                 <View style={[styles.assistantBubble, { alignSelf: 'flex-start' }]}>
-                  <ActivityIndicator size="small" color="#9CA3AF" />
+                  <TypingIndicator />
                 </View>
               </View>
             ) : null
@@ -493,7 +644,27 @@ export default function ChatScreen() {
 
         {/* Input */}
         <BlurView intensity={30} tint="light" style={styles.inputContainer}>
+          {attachedImages.length > 0 && (
+            <View style={styles.attachmentsBar}>
+              {attachedImages.map((img: { uri: string; mimeType: string }) => (
+                <View key={img.uri} style={styles.attachmentItem}>
+                  <ImagePreview uri={img.uri} />
+                  <TouchableOpacity style={styles.removeAttachmentBtn} onPress={() => removeAttachedImage(img.uri)}>
+                    <Ionicons name="close" size={14} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          )}
           <View style={styles.inputWrapper}>
+            <View style={styles.leftActions}>
+              <TouchableOpacity onPress={pickImageFromLibrary} style={styles.iconButton} activeOpacity={0.8}>
+                <Ionicons name="image-outline" size={20} color="#6B7280" />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={takePhotoWithCamera} style={styles.iconButton} activeOpacity={0.8}>
+                <Ionicons name="camera-outline" size={20} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
             <TextInput
               style={styles.textInput}
               placeholder="Message..."
@@ -776,6 +947,58 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     backgroundColor: '#CCC',
+  },
+  attachmentsBar: {
+    flexDirection: 'row',
+    paddingHorizontal: 4,
+    paddingBottom: 8,
+    gap: 8,
+  },
+  attachmentItem: {
+    width: 56,
+    height: 56,
+    borderRadius: 10,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  attachmentImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 10,
+  },
+  removeAttachmentBtn: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  leftActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginRight: 8,
+  },
+  iconButton: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 16,
+  },
+  sentImagesRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 6,
+  },
+  sentImage: {
+    width: 140,
+    height: 140,
+    borderRadius: 12,
   },
   inputContainer: {
     backgroundColor: 'white',

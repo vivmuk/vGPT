@@ -32,6 +32,13 @@
           "resizeMode": "contain",
           "backgroundColor": "#FAFAFA"
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow vGPT to access your photos to attach them to prompts.",
+          "cameraPermission": "Allow vGPT to use your camera to take photos for prompts."
+        }
       ]
     ],
     "extra": {
