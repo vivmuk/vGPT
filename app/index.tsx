@@ -179,7 +179,6 @@ export default function ChatScreen() {
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaType.Images,
         allowsMultipleSelection: false,
         quality: 0.8,
       });
@@ -205,7 +204,6 @@ export default function ChatScreen() {
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaType.Images,
         quality: 0.8,
       });
       console.log('📸 Camera result:', result);
