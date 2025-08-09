@@ -519,76 +519,74 @@ export default function ChatScreen() {
   });
 
   const TypingIndicator: React.FC = () => {
-    const dot1 = useRef(new Animated.Value(0)).current;
-    const dot2 = useRef(new Animated.Value(0)).current;
-    const dot3 = useRef(new Animated.Value(0)).current;
-    const rotation = useRef(new Animated.Value(0)).current;
+    const progressWidth = useRef(new Animated.Value(0)).current;
+    const shimmerPosition = useRef(new Animated.Value(-100)).current;
 
     useEffect(() => {
-      const createDotAnimation = (value: Animated.Value, delay: number) =>
+      const createProgressAnimation = () =>
         Animated.loop(
           Animated.sequence([
-            Animated.timing(value, { toValue: 1, duration: 600, delay, useNativeDriver: true, easing: Easing.bezier(0.68, -0.55, 0.265, 1.55) }),
-            Animated.timing(value, { toValue: 0, duration: 600, useNativeDriver: true, easing: Easing.bezier(0.68, -0.55, 0.265, 1.55) }),
+            Animated.timing(progressWidth, {
+              toValue: 100,
+              duration: 2000,
+              useNativeDriver: false,
+              easing: Easing.bezier(0.25, 0.46, 0.45, 0.94),
+            }),
+            Animated.timing(progressWidth, {
+              toValue: 0,
+              duration: 500,
+              useNativeDriver: false,
+              easing: Easing.bezier(0.55, 0.06, 0.68, 0.19),
+            }),
           ])
         );
 
-      const createRotationAnimation = () =>
+      const createShimmerAnimation = () =>
         Animated.loop(
-          Animated.timing(rotation, {
-            toValue: 1,
-            duration: 2000,
+          Animated.timing(shimmerPosition, {
+            toValue: 200,
+            duration: 1500,
             useNativeDriver: true,
             easing: Easing.linear,
           })
         );
 
-      createDotAnimation(dot1, 0).start();
-      createDotAnimation(dot2, 200).start();
-      createDotAnimation(dot3, 400).start();
-      createRotationAnimation().start();
-    }, [dot1, dot2, dot3, rotation]);
-
-    const renderDot = (value: Animated.Value, color: string, delay: number) => (
-      <Animated.View
-        style={[
-          styles.typingDot,
-          {
-            backgroundColor: color,
-            opacity: value.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }),
-            transform: [
-              {
-                scale: value.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1.2] }),
-              },
-              {
-                translateY: value.interpolate({ inputRange: [0, 1], outputRange: [0, -6] }),
-              },
-            ],
-          },
-        ]}
-      />
-    );
+      createProgressAnimation().start();
+      createShimmerAnimation().start();
+    }, [progressWidth, shimmerPosition]);
 
     return (
-      <Animated.View 
-        style={[
-          styles.typingIndicator,
-          {
-            transform: [
+      <View style={styles.fetchingContainer}>
+        <Text style={styles.fetchingText}>Fetching</Text>
+        <View style={styles.progressBarContainer}>
+          <Animated.View
+            style={[
+              styles.progressBar,
               {
-                rotate: rotation.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: ['0deg', '360deg'],
+                width: progressWidth.interpolate({
+                  inputRange: [0, 100],
+                  outputRange: ['0%', '100%'],
                 }),
               },
-            ],
-          },
-        ]}
-      >
-        {renderDot(dot1, '#FF6B47', 0)}
-        {renderDot(dot2, '#10B981', 200)}
-        {renderDot(dot3, '#3B82F6', 400)}
-      </Animated.View>
+            ]}
+          />
+          <Animated.View
+            style={[
+              styles.shimmerEffect,
+              {
+                transform: [
+                  {
+                    translateX: shimmerPosition.interpolate({
+                      inputRange: [-100, 200],
+                      outputRange: [-100, 200],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          />
+        </View>
+      </View>
     );
   };
 
@@ -974,21 +972,39 @@ const styles = StyleSheet.create({
     marginVertical: 4,
     alignItems: 'flex-start',
   },
-  typingIndicator: {
-    flexDirection: 'row',
+  fetchingContainer: {
     alignItems: 'center',
-    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
   },
-  typingDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+  fetchingText: {
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '500',
+    marginBottom: 8,
+    letterSpacing: 0.5,
+  },
+  progressBarContainer: {
+    width: 120,
+    height: 4,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 2,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  progressBar: {
+    height: '100%',
     backgroundColor: '#FF6B47',
-    shadowColor: '#FF6B47',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.3,
-    shadowRadius: 2,
-    elevation: 2,
+    borderRadius: 2,
+  },
+  shimmerEffect: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    width: 40,
   },
   attachmentsBar: {
     flexDirection: 'row',
