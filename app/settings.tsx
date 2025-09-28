@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   View, 
   Text, 
@@ -38,6 +38,11 @@ interface VeniceModel {
     constraints: {
       temperature: { default: number };
       top_p: { default: number };
+      max_output_tokens?: { default?: number; max?: number };
+      maxOutputTokens?: { default?: number; max?: number };
+      max_tokens?: { default?: number; max?: number };
+      response_tokens?: { default?: number; max?: number };
+      [key: string]: any;
     };
     modelSource: string;
     offline: boolean;
@@ -45,6 +50,56 @@ interface VeniceModel {
     beta?: boolean;
   };
 }
+
+type WebSearchMode = 'off' | 'auto' | 'on';
+
+interface AppSettings {
+  model: string;
+  temperature: number;
+  topP: number;
+  minP: number;
+  maxTokens: number;
+  topK: number;
+  repetitionPenalty: number;
+  webSearch: WebSearchMode;
+  webCitations: boolean;
+  includeSearchResults: boolean;
+  stripThinking: boolean;
+  disableThinking: boolean;
+}
+
+const getConstraintNumber = (constraint: any): number | undefined => {
+  if (constraint == null) return undefined;
+  if (typeof constraint === 'number') return constraint;
+  if (typeof constraint.default === 'number') return constraint.default;
+  if (typeof constraint.max === 'number') return constraint.max;
+  if (typeof constraint.min === 'number') return constraint.min;
+  return undefined;
+};
+
+const getModelDefaultMaxTokens = (model?: VeniceModel | null): number | undefined => {
+  if (!model) return undefined;
+  const constraints = model.model_spec?.constraints || {};
+  const candidates: any[] = [
+    constraints.max_output_tokens,
+    constraints.maxOutputTokens,
+    constraints.max_tokens,
+    constraints.response_tokens,
+  ];
+
+  for (const candidate of candidates) {
+    const value = getConstraintNumber(candidate);
+    if (typeof value === 'number' && value > 0) {
+      return value;
+    }
+  }
+
+  if (typeof model.model_spec.availableContextTokens === 'number') {
+    return model.model_spec.availableContextTokens;
+  }
+
+  return undefined;
+};
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -54,7 +109,7 @@ export default function SettingsScreen() {
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   
   // Settings with localStorage persistence
-  const [settings, setSettings] = useState({
+  const [settings, setSettings] = useState<AppSettings>({
     model: "llama-3.3-70b",
     temperature: 0.7,
     topP: 0.9,
@@ -81,7 +136,7 @@ export default function SettingsScreen() {
     }
   }, []);
 
-  const updateSettings = (newSettings: Partial<typeof settings>) => {
+  const updateSettings = (newSettings: Partial<AppSettings>) => {
     const updatedSettings = { ...settings, ...newSettings };
     setSettings(updatedSettings);
     
@@ -135,7 +190,15 @@ export default function SettingsScreen() {
   };
 
   const handleModelSelect = (modelId: string) => {
-    updateSettings({ model: modelId });
+    const selectedModel = models.find((m: VeniceModel) => m.id === modelId);
+    const defaultMaxTokens = getModelDefaultMaxTokens(selectedModel);
+
+    const updates: Partial<AppSettings> = { model: modelId };
+    if (defaultMaxTokens && defaultMaxTokens > 0) {
+      updates.maxTokens = defaultMaxTokens;
+    }
+
+    updateSettings(updates);
     setShowModelPicker(false);
   };
 
@@ -143,6 +206,24 @@ export default function SettingsScreen() {
     const model = models.find((m: VeniceModel) => m.id === modelId);
     return model?.model_spec.name || modelId;
   };
+
+  const currentModel = useMemo(() => models.find((m: VeniceModel) => m.id === settings.model), [models, settings.model]);
+  const currentModelMaxTokens = useMemo(() => getModelDefaultMaxTokens(currentModel), [currentModel]);
+
+  useEffect(() => {
+    if (!currentModel) return;
+    const defaultMaxTokens = currentModelMaxTokens;
+    if (!defaultMaxTokens) return;
+
+    const shouldUpdate =
+      settings.maxTokens === 4096 ||
+      settings.maxTokens == null ||
+      settings.maxTokens > defaultMaxTokens;
+
+    if (shouldUpdate && settings.maxTokens !== defaultMaxTokens) {
+      updateSettings({ maxTokens: defaultMaxTokens });
+    }
+  }, [currentModel, currentModelMaxTokens, settings.maxTokens]);
 
   const getSettingExplanation = (key: string) => {
     const explanations: Record<string, string> = {
@@ -198,7 +279,7 @@ export default function SettingsScreen() {
           onValueChange={(val: number) => handleSliderChange(key, val)}
           minimumTrackTintColor={color}
           maximumTrackTintColor="#E0E0E0"
-          thumbStyle={{ backgroundColor: color }}
+          thumbTintColor={color}
         />
         
         <TouchableOpacity 
@@ -336,7 +417,16 @@ export default function SettingsScreen() {
         {renderSliderSetting('Temperature', '🌡️', settings.temperature, 0, 2, 0.01, 'temperature')}
         {renderSliderSetting('Top P', '🎯', settings.topP, 0, 1, 0.01, 'topP')}
         {renderSliderSetting('Min P', '📊', settings.minP, 0, 1, 0.01, 'minP')}
-        {renderSliderSetting('Max Tokens', '📝', settings.maxTokens, 1, 8192, 1, 'maxTokens', '#4CAF50')}
+        {renderSliderSetting(
+          'Max Tokens',
+          '📝',
+          settings.maxTokens,
+          1,
+          Math.max(currentModelMaxTokens || 8192, settings.maxTokens || 1),
+          1,
+          'maxTokens',
+          '#4CAF50'
+        )}
         {renderSliderSetting('Top K', '🔢', settings.topK, 1, 100, 1, 'topK', '#9C27B0')}
         {renderSliderSetting('Repetition Penalty', '🔄', settings.repetitionPenalty, 0.5, 2, 0.01, 'repetitionPenalty', '#FF9800')}
       </ScrollView>

@@ -1,16 +1,16 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback, memo } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TextInput, 
-  TouchableOpacity, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
   Alert,
   Modal,
   FlatList,
-  ActivityIndicator
+  Linking
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -39,6 +39,31 @@ interface Message {
     responseTime: number;
     model: string;
   };
+  references?: VeniceReference[];
+}
+
+interface VeniceReference {
+  id?: string | number;
+  title?: string;
+  url?: string;
+  snippet?: string;
+}
+
+type WebSearchMode = 'off' | 'auto' | 'on';
+
+interface AppSettings {
+  model: string;
+  temperature: number;
+  topP: number;
+  minP: number;
+  maxTokens: number;
+  topK: number;
+  repetitionPenalty: number;
+  webSearch: WebSearchMode;
+  webCitations: boolean;
+  includeSearchResults: boolean;
+  stripThinking: boolean;
+  disableThinking: boolean;
 }
 
 interface VeniceModel {
@@ -63,6 +88,11 @@ interface VeniceModel {
     constraints: {
       temperature: { default: number };
       top_p: { default: number };
+      max_output_tokens?: { default?: number; max?: number };
+      maxOutputTokens?: { default?: number; max?: number };
+      max_tokens?: { default?: number; max?: number };
+      response_tokens?: { default?: number; max?: number };
+      [key: string]: any;
     };
     modelSource: string;
     offline: boolean;
@@ -70,6 +100,163 @@ interface VeniceModel {
     beta?: boolean;
   };
 }
+
+const getConstraintNumber = (constraint: any): number | undefined => {
+  if (constraint == null) return undefined;
+  if (typeof constraint === 'number') return constraint;
+  if (typeof constraint.default === 'number') return constraint.default;
+  if (typeof constraint.max === 'number') return constraint.max;
+  if (typeof constraint.min === 'number') return constraint.min;
+  return undefined;
+};
+
+const getModelDefaultMaxTokens = (model?: VeniceModel | null): number | undefined => {
+  if (!model) return undefined;
+  const constraints = model.model_spec?.constraints || {};
+  const candidates: any[] = [
+    constraints.max_output_tokens,
+    constraints.maxOutputTokens,
+    constraints.max_tokens,
+    constraints.response_tokens,
+  ];
+
+  for (const candidate of candidates) {
+    const value = getConstraintNumber(candidate);
+    if (typeof value === 'number' && value > 0) {
+      return value;
+    }
+  }
+
+  if (typeof model.model_spec.availableContextTokens === 'number') {
+    return model.model_spec.availableContextTokens;
+  }
+
+  return undefined;
+};
+
+const normalizeReference = (ref: any, index: number): VeniceReference | null => {
+  if (!ref) return null;
+
+  if (typeof ref === 'string') {
+    return {
+      id: index,
+      url: ref,
+      title: ref,
+    };
+  }
+
+  const metadata = ref.metadata || {};
+  const url =
+    ref.url ||
+    ref.link ||
+    ref.href ||
+    ref.source_url ||
+    metadata.url ||
+    metadata.link ||
+    metadata.href ||
+    metadata.source_url ||
+    ref.website?.url ||
+    ref.website ||
+    metadata.website?.url ||
+    metadata.website;
+  const title =
+    ref.title ||
+    ref.name ||
+    ref.page_title ||
+    metadata.title ||
+    metadata.name ||
+    metadata.page_title ||
+    ref.website?.title ||
+    ref.website?.name ||
+    metadata.website?.title ||
+    metadata.website?.name ||
+    ref.source ||
+    ref.domain;
+  const snippet =
+    ref.snippet ||
+    ref.text ||
+    ref.content ||
+    ref.excerpt ||
+    ref.description ||
+    metadata.snippet ||
+    metadata.text ||
+    metadata.content ||
+    metadata.excerpt ||
+    metadata.description;
+  const id = ref.id ?? ref.citation_id ?? ref.document_id ?? index;
+
+  if (!url && !title && !snippet) {
+    return null;
+  }
+
+  return {
+    id,
+    title,
+    url,
+    snippet,
+  };
+};
+
+const extractVeniceReferences = (data: any): VeniceReference[] => {
+  const references: VeniceReference[] = [];
+  const potentialSources = [
+    data?.choices?.[0]?.message?.metadata?.citations,
+    data?.choices?.[0]?.message?.metadata?.references,
+    data?.choices?.[0]?.message?.metadata?.search_results,
+    data?.choices?.[0]?.message?.citations,
+    data?.choices?.[0]?.message?.references,
+    data?.choices?.[0]?.citations,
+    data?.choices?.[0]?.references,
+    data?.choices?.[0]?.search_results,
+    data?.citations,
+    data?.references,
+    data?.search_results,
+  ];
+
+  potentialSources.forEach((source) => {
+    if (!source) return;
+    if (Array.isArray(source)) {
+      source.forEach((ref: any) => {
+        const normalized = normalizeReference(ref, references.length);
+        if (normalized) {
+          references.push(normalized);
+        }
+      });
+    } else if (typeof source === 'object') {
+      Object.values(source).forEach((ref: any) => {
+        const normalized = normalizeReference(ref, references.length);
+        if (normalized) {
+          references.push(normalized);
+        }
+      });
+    }
+  });
+
+  return references;
+};
+
+const sanitizeContentWithReferences = (content: string, references: VeniceReference[]): string => {
+  if (!content) return '';
+
+  let counter = 0;
+  let sanitized = content.replace(/\[\/REF\]/g, '');
+
+  if (references?.length) {
+    sanitized = sanitized.replace(/\[REF[^\]]*\]/g, () => {
+      counter += 1;
+      if (counter <= references.length) {
+        return ` [${counter}]`;
+      }
+      return '';
+    });
+  } else {
+    sanitized = sanitized.replace(/\[REF[^\]]*\]/g, '');
+  }
+
+  sanitized = sanitized.replace(/\s+\n/g, '\n').replace(/\n\s+/g, '\n');
+
+  return sanitized.trim();
+};
 
 export default function ChatScreen() {
   const router = useRouter();
@@ -83,7 +270,7 @@ export default function ChatScreen() {
   const [attachedImages, setAttachedImages] = useState<{ uri: string; mimeType: string }[]>([]);
   
   // Settings with localStorage persistence
-  const [settings, setSettings] = useState({
+  const [settings, setSettings] = useState<AppSettings>({
     model: "llama-3.3-70b",
     temperature: 0.7,
     topP: 0.9,
@@ -110,7 +297,7 @@ export default function ChatScreen() {
     }
   }, []);
 
-  const updateSettings = (newSettings: Partial<typeof settings>) => {
+  const updateSettings = (newSettings: Partial<AppSettings>) => {
     const updatedSettings = { ...settings, ...newSettings };
     setSettings(updatedSettings);
     
@@ -166,9 +353,40 @@ export default function ChatScreen() {
   };
 
   const handleModelSelect = (modelId: string) => {
-    updateSettings({ model: modelId });
+    const selectedModel = models.find((m: VeniceModel) => m.id === modelId);
+    const defaultMaxTokens = getModelDefaultMaxTokens(selectedModel);
+    const updates: Partial<AppSettings> = { model: modelId };
+    if (defaultMaxTokens && defaultMaxTokens > 0) {
+      updates.maxTokens = defaultMaxTokens;
+    }
+
+    updateSettings(updates);
     setShowModelPicker(false);
   };
+
+  const openReferenceLink = useCallback((url?: string) => {
+    if (!url) return;
+    Linking.openURL(url).catch(() => {
+      Alert.alert('Unable to open link', 'The reference link could not be opened.');
+    });
+  }, []);
+
+  const currentModel = useMemo(() => models.find((m: VeniceModel) => m.id === settings.model), [models, settings.model]);
+
+  useEffect(() => {
+    if (!currentModel) return;
+    const defaultMaxTokens = getModelDefaultMaxTokens(currentModel);
+    if (!defaultMaxTokens) return;
+
+    const shouldUpdate =
+      settings.maxTokens === 4096 ||
+      settings.maxTokens == null ||
+      settings.maxTokens > defaultMaxTokens;
+
+    if (shouldUpdate && settings.maxTokens !== defaultMaxTokens) {
+      updateSettings({ maxTokens: defaultMaxTokens });
+    }
+  }, [currentModel, settings.maxTokens]);
 
   const pickImageFromLibrary = async () => {
     try {
@@ -345,7 +563,7 @@ export default function ChatScreen() {
       const fullContent = data.choices[0]?.message?.content || "Sorry, I couldn't generate a response.";
       let thinking = "";
       let content = fullContent;
-      
+
       // Parse thinking if present
       if (fullContent.includes("<think>") && fullContent.includes("</think>")) {
         const thinkMatch = fullContent.match(/<think>([\s\S]*?)<\/think>/);
@@ -354,7 +572,10 @@ export default function ChatScreen() {
           content = fullContent.replace(/<think>[\s\S]*?<\/think>/, "").trim();
         }
       }
-      
+
+      const references = extractVeniceReferences(data);
+      content = sanitizeContentWithReferences(content, references);
+
       // Calculate metrics
       const usage = data.usage || {};
       const inputTokens = usage.prompt_tokens || 0;
@@ -384,6 +605,7 @@ export default function ChatScreen() {
           responseTime,
           model: settings.model,
         },
+        references,
       };
 
       setMessages((prev: Message[]) => [...prev, aiMessage]);
@@ -469,9 +691,46 @@ export default function ChatScreen() {
           <Text style={[styles.messageText, styles.assistantText]}>
             {msg.content}
           </Text>
-          
+
+          {msg.references && msg.references.length > 0 && (
+            <View style={styles.referencesContainer}>
+              <Text style={styles.referencesTitle}>References</Text>
+              {msg.references.map((ref: VeniceReference, index: number) => {
+                const referenceContent = (
+                  <>
+                    <Text style={styles.referenceText}>
+                      {index + 1}. {ref.title || ref.url || 'Source'}
+                    </Text>
+                    {ref.snippet ? (
+                      <Text style={styles.referenceSnippet}>{ref.snippet}</Text>
+                    ) : null}
+                  </>
+                );
+
+                if (ref.url) {
+                  return (
+                    <TouchableOpacity
+                      key={`${ref.url}-${index}`}
+                      style={styles.referenceItem}
+                      onPress={() => openReferenceLink(ref.url)}
+                      activeOpacity={0.7}
+                    >
+                      {referenceContent}
+                    </TouchableOpacity>
+                  );
+                }
+
+                return (
+                  <View key={`${ref.title || 'ref'}-${index}`} style={styles.referenceItem}>
+                    {referenceContent}
+                  </View>
+                );
+              })}
+            </View>
+          )}
+
           {/* Copy Button */}
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.copyButton}
             onPress={() => copyToClipboard(msg.content)}
           >
@@ -512,7 +771,7 @@ export default function ChatScreen() {
         )}
       </View>
     );
-  }, [copyToClipboard, getModelDisplayName]);
+  }, [copyToClipboard, getModelDisplayName, openReferenceLink]);
 
   const MessageItem = memo(({ item }: { item: Message }) => {
     return renderMessage(item);
@@ -966,6 +1225,38 @@ const styles = StyleSheet.create({
   },
   assistantText: {
     color: '#333',
+  },
+  referencesContainer: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    gap: 8,
+  },
+  referencesTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6B7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  referenceItem: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  referenceText: {
+    fontSize: 14,
+    color: '#1F2937',
+    fontWeight: '500',
+  },
+  referenceSnippet: {
+    marginTop: 4,
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 18,
   },
   loadingMessage: {
     paddingHorizontal: 16,
