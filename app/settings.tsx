@@ -1,72 +1,25 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
   ScrollView,
   Alert,
   Modal,
   FlatList,
-  Platform
+  Platform,
+  ActivityIndicator
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Slider from '@react-native-community/slider';
 import * as Haptics from 'expo-haptics';
-
-interface VeniceModel {
-  id: string;
-  model_spec: {
-    name: string;
-    pricing: {
-      input: { usd: number; vcu: number; diem: number };
-      output: { usd: number; vcu: number; diem: number };
-    };
-    availableContextTokens: number;
-    capabilities: {
-      optimizedForCode: boolean;
-      quantization: string;
-      supportsFunctionCalling: boolean;
-      supportsReasoning: boolean;
-      supportsResponseSchema: boolean;
-      supportsVision: boolean;
-      supportsWebSearch: boolean;
-      supportsLogProbs: boolean;
-    };
-    constraints: {
-      temperature: { default: number };
-      top_p: { default: number };
-      max_output_tokens?: { default?: number; max?: number };
-      maxOutputTokens?: { default?: number; max?: number };
-      max_tokens?: { default?: number; max?: number };
-      response_tokens?: { default?: number; max?: number };
-      [key: string]: any;
-    };
-    modelSource: string;
-    offline: boolean;
-    traits: string[];
-    beta?: boolean;
-  };
-}
-
-type WebSearchMode = 'off' | 'auto' | 'on';
-
-interface AppSettings {
-  model: string;
-  temperature: number;
-  topP: number;
-  minP: number;
-  maxTokens: number;
-  topK: number;
-  repetitionPenalty: number;
-  webSearch: WebSearchMode;
-  webCitations: boolean;
-  includeSearchResults: boolean;
-  stripThinking: boolean;
-  disableThinking: boolean;
-}
+import { DEFAULT_SETTINGS } from '@/constants/settings';
+import { AppSettings, WebSearchMode } from '@/types/settings';
+import { VeniceModel } from '@/types/venice';
+import { loadStoredSettings, persistSettings } from '@/utils/settingsStorage';
 
 const getConstraintNumber = (constraint: any): number | undefined => {
   if (constraint == null) return undefined;
@@ -101,62 +54,59 @@ const getModelDefaultMaxTokens = (model?: VeniceModel | null): number | undefine
   return undefined;
 };
 
+const resolveUsdPrice = (pricingSection: unknown): number | undefined => {
+  if (pricingSection == null) {
+    return undefined;
+  }
+
+  if (typeof pricingSection === 'number') {
+    return pricingSection;
+  }
+
+  if (typeof pricingSection === 'object' && 'usd' in (pricingSection as Record<string, unknown>)) {
+    const value = (pricingSection as Record<string, unknown>).usd;
+    return typeof value === 'number' ? value : undefined;
+  }
+
+  return undefined;
+};
+
 export default function SettingsScreen() {
   const router = useRouter();
-  
+
   const [models, setModels] = useState<VeniceModel[]>([]);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
-  
-  // Settings with localStorage persistence
-  const [settings, setSettings] = useState<AppSettings>({
-    model: "llama-3.3-70b",
-    temperature: 0.7,
-    topP: 0.9,
-    minP: 0.05,
-    maxTokens: 4096, // Increased for longer responses
-    topK: 40,
-    repetitionPenalty: 1.2,
-    webSearch: "auto" as const,
-    webCitations: true,
-    includeSearchResults: true,
-    stripThinking: false,
-    disableThinking: false,
-  });
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
-  // Load settings from localStorage on mount
   useEffect(() => {
-    try {
-      const savedSettings = localStorage.getItem('vgpt-settings');
-      if (savedSettings) {
-        setSettings(JSON.parse(savedSettings));
+    let isMounted = true;
+
+    (async () => {
+      const stored = await loadStoredSettings<AppSettings>(DEFAULT_SETTINGS);
+      if (isMounted) {
+        setSettings((prev) => ({ ...prev, ...stored }));
       }
-    } catch (error) {
-      console.error('Failed to load settings:', error);
-    }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
-  const updateSettings = (newSettings: Partial<AppSettings>) => {
-    const updatedSettings = { ...settings, ...newSettings };
-    setSettings(updatedSettings);
-    
-    // Save to localStorage
-    try {
-      localStorage.setItem('vgpt-settings', JSON.stringify(updatedSettings));
-    } catch (error) {
-      console.error('Failed to save settings:', error);
-    }
-  };
-
-  useEffect(() => {
-    loadModels();
+  const updateSettings = useCallback((newSettings: Partial<AppSettings>) => {
+    setSettings((prev) => {
+      const updated = { ...prev, ...newSettings };
+      void persistSettings(updated);
+      return updated;
+    });
   }, []);
 
-  const loadModels = async () => {
+  const loadModels = useCallback(async () => {
     setIsLoadingModels(true);
     try {
       const apiKey = "ntmhtbP2fr_pOQsmuLPuN_nm6lm2INWKiNcvrdEfEC";
-      
+
       const response = await fetch("https://api.venice.ai/api/v1/models", {
         method: "GET",
         headers: {
@@ -176,20 +126,24 @@ export default function SettingsScreen() {
     } finally {
       setIsLoadingModels(false);
     }
-  };
+  }, []);
 
-  const handleSliderChange = (key: string, value: number) => {
+  useEffect(() => {
+    loadModels();
+  }, [loadModels]);
+
+  const handleSliderChange = useCallback((key: keyof AppSettings, value: number) => {
     if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
-    updateSettings({ [key]: value });
-  };
+    updateSettings({ [key]: value } as Partial<AppSettings>);
+  }, [updateSettings]);
 
-  const handleWebSearchChange = (value: 'off' | 'auto' | 'on') => {
+  const handleWebSearchChange = useCallback((value: WebSearchMode) => {
     updateSettings({ webSearch: value });
-  };
+  }, [updateSettings]);
 
-  const handleModelSelect = (modelId: string) => {
+  const handleModelSelect = useCallback((modelId: string) => {
     const selectedModel = models.find((m: VeniceModel) => m.id === modelId);
     const defaultMaxTokens = getModelDefaultMaxTokens(selectedModel);
 
@@ -200,7 +154,7 @@ export default function SettingsScreen() {
 
     updateSettings(updates);
     setShowModelPicker(false);
-  };
+  }, [models, updateSettings]);
 
   const getModelDisplayName = (modelId: string) => {
     const model = models.find((m: VeniceModel) => m.id === modelId);
@@ -244,7 +198,7 @@ export default function SettingsScreen() {
     min: number,
     max: number,
     step: number,
-    key: string,
+    settingKey: keyof AppSettings,
     color: string = '#FF6B47'
   ) => (
     <View style={styles.settingContainer}>
@@ -257,34 +211,34 @@ export default function SettingsScreen() {
           {value.toFixed(step < 1 ? 2 : 0)}
         </Text>
       </View>
-      
+
       <Text style={styles.settingExplanation}>
-        {getSettingExplanation(key)}
+        {getSettingExplanation(settingKey as string)}
       </Text>
-      
+
       <View style={styles.sliderContainer}>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.sliderButton}
-          onPress={() => handleSliderChange(key, Math.max(min, value - step))}
+          onPress={() => handleSliderChange(settingKey, Math.max(min, value - step))}
         >
           <Ionicons name="remove" size={16} color={color} />
         </TouchableOpacity>
-        
+
         <Slider
           style={styles.slider}
           minimumValue={min}
           maximumValue={max}
           step={step}
           value={value}
-          onValueChange={(val: number) => handleSliderChange(key, val)}
+          onValueChange={(val: number) => handleSliderChange(settingKey, val)}
           minimumTrackTintColor={color}
           maximumTrackTintColor="#E0E0E0"
           thumbTintColor={color}
         />
-        
-        <TouchableOpacity 
+
+        <TouchableOpacity
           style={styles.sliderButton}
-          onPress={() => handleSliderChange(key, Math.min(max, value + step))}
+          onPress={() => handleSliderChange(settingKey, Math.min(max, value + step))}
         >
           <Ionicons name="add" size={16} color={color} />
         </TouchableOpacity>
@@ -292,58 +246,73 @@ export default function SettingsScreen() {
     </View>
   );
 
-  const renderModelItem = ({ item }: { item: VeniceModel }) => (
-    <TouchableOpacity
-      style={[
-        styles.modelItem,
-        settings.model === item.id && styles.selectedModelItem
-      ]}
-      onPress={() => handleModelSelect(item.id)}
-    >
-      <View style={styles.modelInfo}>
-        <View style={styles.modelHeader}>
-          <Text style={styles.modelName}>{item.model_spec.name}</Text>
-          {item.model_spec.beta && (
-            <Text style={styles.betaTag}>BETA</Text>
-          )}
+  const renderModelItem = useCallback(({ item }: { item: VeniceModel }) => {
+    const availableContext = item.model_spec.availableContextTokens;
+    const metaParts: string[] = [];
+    if (typeof availableContext === 'number' && availableContext > 0) {
+      metaParts.push(`${Math.round((availableContext / 1000) * 10) / 10}K context`);
+    }
+    const quantization = item.model_spec.capabilities?.quantization;
+    if (quantization) {
+      metaParts.push(quantization);
+    }
+    const metaText = metaParts.length > 0 ? metaParts.join(' • ') : 'Specs unavailable';
+
+    const capabilities = item.model_spec.capabilities || {};
+    const inputUsd = resolveUsdPrice(item.model_spec.pricing?.input);
+    const outputUsd = resolveUsdPrice(item.model_spec.pricing?.output);
+
+    return (
+      <TouchableOpacity
+        style={[
+          styles.modelItem,
+          settings.model === item.id && styles.selectedModelItem
+        ]}
+        onPress={() => handleModelSelect(item.id)}
+      >
+        <View style={styles.modelInfo}>
+          <View style={styles.modelHeader}>
+            <Text style={styles.modelName}>{item.model_spec.name}</Text>
+            {item.model_spec.beta && (
+              <Text style={styles.betaTag}>BETA</Text>
+            )}
+          </View>
+          <Text style={styles.modelId}>{item.id}</Text>
+          <Text style={styles.contextTokens}>{metaText}</Text>
+          <View style={styles.modelCapabilities}>
+            {capabilities.supportsWebSearch && (
+              <Text style={styles.capabilityTag}>🌐 Web</Text>
+            )}
+            {capabilities.supportsReasoning && (
+              <Text style={styles.capabilityTag}>🧠 Reasoning</Text>
+            )}
+            {capabilities.optimizedForCode && (
+              <Text style={styles.capabilityTag}>💻 Code</Text>
+            )}
+            {capabilities.supportsVision && (
+              <Text style={styles.capabilityTag}>👁️ Vision</Text>
+            )}
+            {capabilities.supportsFunctionCalling && (
+              <Text style={styles.capabilityTag}>🔧 Functions</Text>
+            )}
+          </View>
         </View>
-        <Text style={styles.modelId}>{item.id}</Text>
-        <Text style={styles.contextTokens}>
-          {(item.model_spec.availableContextTokens / 1000).toFixed(0)}K context • {item.model_spec.capabilities.quantization}
-        </Text>
-        <View style={styles.modelCapabilities}>
-          {item.model_spec.capabilities.supportsWebSearch && (
-            <Text style={styles.capabilityTag}>🌐 Web</Text>
-          )}
-          {item.model_spec.capabilities.supportsReasoning && (
-            <Text style={styles.capabilityTag}>🧠 Reasoning</Text>
-          )}
-          {item.model_spec.capabilities.optimizedForCode && (
-            <Text style={styles.capabilityTag}>💻 Code</Text>
-          )}
-          {item.model_spec.capabilities.supportsVision && (
-            <Text style={styles.capabilityTag}>👁️ Vision</Text>
-          )}
-          {item.model_spec.capabilities.supportsFunctionCalling && (
-            <Text style={styles.capabilityTag}>🔧 Functions</Text>
-          )}
+
+        <View style={styles.modelPricing}>
+          <Text style={styles.pricingText}>
+            {inputUsd != null ? `$${inputUsd}/1M in` : '—'}
+          </Text>
+          <Text style={styles.pricingText}>
+            {outputUsd != null ? `$${outputUsd}/1M out` : '—'}
+          </Text>
         </View>
-      </View>
-      
-      <View style={styles.modelPricing}>
-        <Text style={styles.pricingText}>
-          ${item.model_spec.pricing.input.usd}/1M in
-        </Text>
-        <Text style={styles.pricingText}>
-          ${item.model_spec.pricing.output.usd}/1M out
-        </Text>
-      </View>
-      
-      {settings.model === item.id && (
-        <Ionicons name="checkmark-circle" size={24} color="#4CAF50" />
-      )}
-    </TouchableOpacity>
-  );
+
+        {settings.model === item.id && (
+          <Ionicons name="checkmark-circle" size={24} color="#4CAF50" />
+        )}
+      </TouchableOpacity>
+    );
+  }, [handleModelSelect, settings.model]);
 
 
 
@@ -448,7 +417,8 @@ export default function SettingsScreen() {
           
           {isLoadingModels ? (
             <View style={styles.loadingContainer}>
-              <Text>Loading models...</Text>
+              <ActivityIndicator size="small" color="#FF6B47" />
+              <Text style={styles.loadingText}>Loading models...</Text>
             </View>
           ) : (
             <FlatList
@@ -456,6 +426,11 @@ export default function SettingsScreen() {
               renderItem={renderModelItem}
               keyExtractor={(item: VeniceModel) => item.id}
               contentContainerStyle={styles.modelList}
+              ListEmptyComponent={(
+                <View style={styles.loadingContainer}>
+                  <Text style={styles.emptyModelsText}>No models available.</Text>
+                </View>
+              )}
             />
           )}
         </SafeAreaView>
@@ -473,6 +448,17 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  emptyModelsText: {
+    fontSize: 16,
+    color: '#6B7280',
+    fontWeight: '500',
   },
   header: {
     flexDirection: 'row',

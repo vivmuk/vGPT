@@ -10,7 +10,8 @@ import {
   Alert,
   Modal,
   FlatList,
-  Linking
+  Linking,
+  ScrollView
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -23,6 +24,10 @@ import * as Haptics from 'expo-haptics';
 // Hardcoded API key in code as requested
 import { BlurView } from 'expo-blur';
 import { Animated, Easing } from 'react-native';
+import { DEFAULT_SETTINGS } from '@/constants/settings';
+import { AppSettings } from '@/types/settings';
+import { VeniceModel } from '@/types/venice';
+import { loadStoredSettings, persistSettings } from '@/utils/settingsStorage';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -47,58 +52,6 @@ interface VeniceReference {
   title?: string;
   url?: string;
   snippet?: string;
-}
-
-type WebSearchMode = 'off' | 'auto' | 'on';
-
-interface AppSettings {
-  model: string;
-  temperature: number;
-  topP: number;
-  minP: number;
-  maxTokens: number;
-  topK: number;
-  repetitionPenalty: number;
-  webSearch: WebSearchMode;
-  webCitations: boolean;
-  includeSearchResults: boolean;
-  stripThinking: boolean;
-  disableThinking: boolean;
-}
-
-interface VeniceModel {
-  id: string;
-  model_spec: {
-    name: string;
-    pricing: {
-      input: { usd: number; vcu: number; diem: number };
-      output: { usd: number; vcu: number; diem: number };
-    };
-    availableContextTokens: number;
-    capabilities: {
-      optimizedForCode: boolean;
-      quantization: string;
-      supportsFunctionCalling: boolean;
-      supportsReasoning: boolean;
-      supportsResponseSchema: boolean;
-      supportsVision: boolean;
-      supportsWebSearch: boolean;
-      supportsLogProbs: boolean;
-    };
-    constraints: {
-      temperature: { default: number };
-      top_p: { default: number };
-      max_output_tokens?: { default?: number; max?: number };
-      maxOutputTokens?: { default?: number; max?: number };
-      max_tokens?: { default?: number; max?: number };
-      response_tokens?: { default?: number; max?: number };
-      [key: string]: any;
-    };
-    modelSource: string;
-    offline: boolean;
-    traits: string[];
-    beta?: boolean;
-  };
 }
 
 const getConstraintNumber = (constraint: any): number | undefined => {
@@ -258,6 +211,23 @@ const sanitizeContentWithReferences = (content: string, references: VeniceRefere
   return sanitized.trim();
 };
 
+const resolveUsdPrice = (pricingSection: unknown): number | undefined => {
+  if (pricingSection == null) {
+    return undefined;
+  }
+
+  if (typeof pricingSection === 'number') {
+    return pricingSection;
+  }
+
+  if (typeof pricingSection === 'object' && 'usd' in (pricingSection as Record<string, unknown>)) {
+    const value = (pricingSection as Record<string, unknown>).usd;
+    return typeof value === 'number' ? value : undefined;
+  }
+
+  return undefined;
+};
+
 export default function ChatScreen() {
   const router = useRouter();
   const [message, setMessage] = useState('');
@@ -269,45 +239,30 @@ export default function ChatScreen() {
   const flatListRef = useRef<FlatList<Message>>(null);
   const [attachedImages, setAttachedImages] = useState<{ uri: string; mimeType: string }[]>([]);
   
-  // Settings with localStorage persistence
-  const [settings, setSettings] = useState<AppSettings>({
-    model: "llama-3.3-70b",
-    temperature: 0.7,
-    topP: 0.9,
-    minP: 0.05,
-    maxTokens: 4096, // Increased for longer responses
-    topK: 40,
-    repetitionPenalty: 1.2,
-    webSearch: "auto" as const,
-    webCitations: true,
-    includeSearchResults: true,
-    stripThinking: false,
-    disableThinking: false,
-  });
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
-  // Load settings from localStorage on mount
   useEffect(() => {
-    try {
-      const savedSettings = localStorage.getItem('vgpt-settings');
-      if (savedSettings) {
-        setSettings(JSON.parse(savedSettings));
+    let isMounted = true;
+
+    (async () => {
+      const stored = await loadStoredSettings<AppSettings>(DEFAULT_SETTINGS);
+      if (isMounted) {
+        setSettings((prev) => ({ ...prev, ...stored }));
       }
-    } catch (error) {
-      console.error('Failed to load settings:', error);
-    }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
-  const updateSettings = (newSettings: Partial<AppSettings>) => {
-    const updatedSettings = { ...settings, ...newSettings };
-    setSettings(updatedSettings);
-    
-    // Save to localStorage
-    try {
-      localStorage.setItem('vgpt-settings', JSON.stringify(updatedSettings));
-    } catch (error) {
-      console.error('Failed to save settings:', error);
-    }
-  };
+  const updateSettings = useCallback((newSettings: Partial<AppSettings>) => {
+    setSettings((prev) => {
+      const updatedSettings = { ...prev, ...newSettings };
+      void persistSettings(updatedSettings);
+      return updatedSettings;
+    });
+  }, []);
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -322,15 +277,11 @@ export default function ChatScreen() {
     }
   }, [messages.length]);
 
-  useEffect(() => {
-    loadModels();
-  }, []);
-
-  const loadModels = async () => {
+  const loadModels = useCallback(async () => {
     setIsLoadingModels(true);
     try {
       const apiKey = "ntmhtbP2fr_pOQsmuLPuN_nm6lm2INWKiNcvrdEfEC";
-      
+
       const response = await fetch("https://api.venice.ai/api/v1/models", {
         method: "GET",
         headers: {
@@ -350,9 +301,13 @@ export default function ChatScreen() {
     } finally {
       setIsLoadingModels(false);
     }
-  };
+  }, []);
 
-  const handleModelSelect = (modelId: string) => {
+  useEffect(() => {
+    loadModels();
+  }, [loadModels]);
+
+  const handleModelSelect = useCallback((modelId: string) => {
     const selectedModel = models.find((m: VeniceModel) => m.id === modelId);
     const defaultMaxTokens = getModelDefaultMaxTokens(selectedModel);
     const updates: Partial<AppSettings> = { model: modelId };
@@ -362,7 +317,7 @@ export default function ChatScreen() {
 
     updateSettings(updates);
     setShowModelPicker(false);
-  };
+  }, [models, updateSettings]);
 
   const openReferenceLink = useCallback((url?: string) => {
     if (!url) return;
@@ -618,9 +573,9 @@ export default function ChatScreen() {
     }
   };
 
-  const handleNewChat = () => {
+  const handleNewChat = useCallback(() => {
     setMessages([]);
-  };
+  }, []);
 
   const modelIdToName = useMemo(() => {
     const map = new Map<string, string>();
@@ -632,17 +587,19 @@ export default function ChatScreen() {
     return modelIdToName.get(modelId) || modelId;
   }, [modelIdToName]);
 
-  const copyToClipboard = async (text: string) => {
+  const copyToClipboard = useCallback(async (text: string) => {
     try {
       await Clipboard.setStringAsync(text);
       if (Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
       Alert.alert('Copied!', 'Response copied to clipboard');
     } catch (error) {
       Alert.alert('Error', 'Failed to copy to clipboard');
     }
-  };
+  }, []);
+
+  const keyExtractor = useCallback((item: Message) => item.id, []);
 
   const renderMessage = useCallback((msg: Message) => {
     const isUser = msg.role === 'user';
@@ -654,7 +611,7 @@ export default function ChatScreen() {
           styles.userMessageContainer
         ]}>
           <View style={[styles.messageBubble, styles.userBubble]}>
-            <Text style={[styles.messageText, styles.userText]}>
+            <Text style={[styles.messageText, styles.userText]} selectable>
               {msg.content}
             </Text>
           </View>
@@ -682,13 +639,13 @@ export default function ChatScreen() {
               <Ionicons name="bulb-outline" size={16} color="#9CA3AF" />
               <Text style={styles.thinkingLabel}>Thinking</Text>
             </View>
-            <Text style={styles.thinkingText}>{msg.thinking}</Text>
+            <Text style={styles.thinkingText} selectable>{msg.thinking}</Text>
           </View>
         )}
 
         {/* Main Response */}
         <View style={[styles.messageBubble, styles.assistantBubble]}>
-          <Text style={[styles.messageText, styles.assistantText]}>
+          <Text style={[styles.messageText, styles.assistantText]} selectable>
             {msg.content}
           </Text>
 
@@ -698,11 +655,13 @@ export default function ChatScreen() {
               {msg.references.map((ref: VeniceReference, index: number) => {
                 const referenceContent = (
                   <>
-                    <Text style={styles.referenceText}>
+                    <Text style={styles.referenceText} selectable>
                       {index + 1}. {ref.title || ref.url || 'Source'}
                     </Text>
                     {ref.snippet ? (
-                      <Text style={styles.referenceSnippet}>{ref.snippet}</Text>
+                      <Text style={styles.referenceSnippet} selectable>
+                        {ref.snippet}
+                      </Text>
                     ) : null}
                   </>
                 );
@@ -776,6 +735,77 @@ export default function ChatScreen() {
   const MessageItem = memo(({ item }: { item: Message }) => {
     return renderMessage(item);
   });
+
+  const renderModelItem = useCallback(
+    ({ item }: { item: VeniceModel }) => {
+      const availableContext = item.model_spec.availableContextTokens;
+      const metaParts: string[] = [];
+      if (typeof availableContext === 'number' && availableContext > 0) {
+        metaParts.push(`${Math.round((availableContext / 1000) * 10) / 10}K context`);
+      }
+      const quantization = item.model_spec.capabilities?.quantization;
+      if (quantization) {
+        metaParts.push(quantization);
+      }
+      const metaText = metaParts.length > 0 ? metaParts.join(' • ') : 'Specs unavailable';
+
+      const inputUsd = resolveUsdPrice(item.model_spec.pricing?.input);
+      const outputUsd = resolveUsdPrice(item.model_spec.pricing?.output);
+      const capabilities = item.model_spec.capabilities || {};
+
+      return (
+        <TouchableOpacity
+          style={[
+            styles.modelItem,
+            settings.model === item.id && styles.selectedModelItem
+          ]}
+          onPress={() => handleModelSelect(item.id)}
+        >
+          <View style={styles.modelInfo}>
+            <View style={styles.modelHeader}>
+              <Text style={styles.modelName}>{item.model_spec.name}</Text>
+              {item.model_spec.beta && (
+                <Text style={styles.betaTag}>BETA</Text>
+              )}
+            </View>
+            <Text style={styles.modelId}>{item.id}</Text>
+            <Text style={styles.contextTokens}>{metaText}</Text>
+            <View style={styles.modelCapabilities}>
+              {capabilities.supportsWebSearch && (
+                <Text style={styles.capabilityTag}>🌐 Web</Text>
+              )}
+              {capabilities.supportsReasoning && (
+                <Text style={styles.capabilityTag}>🧠 Reasoning</Text>
+              )}
+              {capabilities.optimizedForCode && (
+                <Text style={styles.capabilityTag}>💻 Code</Text>
+              )}
+              {capabilities.supportsVision && (
+                <Text style={styles.capabilityTag}>👁️ Vision</Text>
+              )}
+              {capabilities.supportsFunctionCalling && (
+                <Text style={styles.capabilityTag}>🔧 Functions</Text>
+              )}
+            </View>
+          </View>
+
+          <View style={styles.modelPricing}>
+            <Text style={styles.pricingText}>
+              {inputUsd != null ? `$${inputUsd}/1M in` : '—'}
+            </Text>
+            <Text style={styles.pricingText}>
+              {outputUsd != null ? `$${outputUsd}/1M out` : '—'}
+            </Text>
+          </View>
+
+          {settings.model === item.id && (
+            <Ionicons name="checkmark-circle" size={24} color="#4CAF50" />
+          )}
+        </TouchableOpacity>
+      );
+    },
+    [handleModelSelect, settings.model]
+  );
 
   const TypingIndicator: React.FC = () => {
     const progressWidth = useRef(new Animated.Value(0)).current;
@@ -903,7 +933,7 @@ export default function ChatScreen() {
           ref={flatListRef}
           data={messages}
           style={styles.messagesContainer}
-          keyExtractor={(item: Message) => item.id}
+          keyExtractor={keyExtractor}
           renderItem={({ item }: { item: Message }) => <MessageItem item={item} />}
           contentContainerStyle={messages.length === 0 ? styles.emptyState : styles.messagesContent}
           ListEmptyComponent={
@@ -929,17 +959,23 @@ export default function ChatScreen() {
           }
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          removeClippedSubviews
+          removeClippedSubviews={Platform.OS !== 'web'}
           initialNumToRender={12}
           maxToRenderPerBatch={12}
           windowSize={5}
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
         />
 
         {/* Input */}
         <BlurView intensity={30} tint="light" style={styles.inputContainer}>
           {attachedImages.length > 0 && (
-            <View style={styles.attachmentsBar}>
+            <ScrollView
+              horizontal
+              style={styles.attachmentsBar}
+              contentContainerStyle={styles.attachmentsContent}
+              showsHorizontalScrollIndicator={false}
+            >
               {attachedImages.map((img: { uri: string; mimeType: string }) => (
                 <View key={img.uri} style={styles.attachmentItem}>
                   <ImagePreview uri={img.uri} />
@@ -948,7 +984,7 @@ export default function ChatScreen() {
                   </TouchableOpacity>
                 </View>
               ))}
-            </View>
+            </ScrollView>
           )}
           <View style={styles.inputWrapper}>
             <View style={styles.leftActions}>
@@ -1008,60 +1044,14 @@ export default function ChatScreen() {
           ) : (
             <FlatList
               data={models}
-                renderItem={({ item }: { item: VeniceModel }) => (
-                <TouchableOpacity
-                  style={[
-                    styles.modelItem,
-                    settings.model === item.id && styles.selectedModelItem
-                  ]}
-                  onPress={() => handleModelSelect(item.id)}
-                >
-                  <View style={styles.modelInfo}>
-                    <View style={styles.modelHeader}>
-                      <Text style={styles.modelName}>{item.model_spec.name}</Text>
-                      {item.model_spec.beta && (
-                        <Text style={styles.betaTag}>BETA</Text>
-                      )}
-                    </View>
-                    <Text style={styles.modelId}>{item.id}</Text>
-                    <Text style={styles.contextTokens}>
-                      {(item.model_spec.availableContextTokens / 1000).toFixed(0)}K context • {item.model_spec.capabilities.quantization}
-                    </Text>
-                    <View style={styles.modelCapabilities}>
-                      {item.model_spec.capabilities.supportsWebSearch && (
-                        <Text style={styles.capabilityTag}>🌐 Web</Text>
-                      )}
-                      {item.model_spec.capabilities.supportsReasoning && (
-                        <Text style={styles.capabilityTag}>🧠 Reasoning</Text>
-                      )}
-                      {item.model_spec.capabilities.optimizedForCode && (
-                        <Text style={styles.capabilityTag}>💻 Code</Text>
-                      )}
-                      {item.model_spec.capabilities.supportsVision && (
-                        <Text style={styles.capabilityTag}>👁️ Vision</Text>
-                      )}
-                      {item.model_spec.capabilities.supportsFunctionCalling && (
-                        <Text style={styles.capabilityTag}>🔧 Functions</Text>
-                      )}
-                    </View>
-                  </View>
-                  
-                  <View style={styles.modelPricing}>
-                    <Text style={styles.pricingText}>
-                      ${item.model_spec.pricing.input.usd}/1M in
-                    </Text>
-                    <Text style={styles.pricingText}>
-                      ${item.model_spec.pricing.output.usd}/1M out
-                    </Text>
-                  </View>
-                  
-                  {settings.model === item.id && (
-                    <Ionicons name="checkmark-circle" size={24} color="#4CAF50" />
-                  )}
-                </TouchableOpacity>
-              )}
+              renderItem={renderModelItem}
               keyExtractor={(item: VeniceModel) => item.id}
               contentContainerStyle={styles.modelList}
+              ListEmptyComponent={(
+                <View style={styles.loadingContainer}>
+                  <Text style={styles.emptyModelsText}>No models available.</Text>
+                </View>
+              )}
             />
           )}
         </SafeAreaView>
@@ -1079,6 +1069,11 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  emptyModelsText: {
+    fontSize: 16,
+    color: '#6B7280',
+    fontWeight: '500',
   },
   header: {
     flexDirection: 'row',
@@ -1298,10 +1293,14 @@ const styles = StyleSheet.create({
     width: 40,
   },
   attachmentsBar: {
+    maxHeight: 72,
+    marginBottom: 8,
+  },
+  attachmentsContent: {
     flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 4,
     paddingBottom: 8,
-    gap: 8,
   },
   attachmentItem: {
     width: 56,
@@ -1309,6 +1308,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     overflow: 'hidden',
     position: 'relative',
+    marginRight: 8,
   },
   attachmentImage: {
     width: '100%',
@@ -1378,6 +1378,7 @@ const styles = StyleSheet.create({
     color: '#333',
     maxHeight: 120,
     paddingVertical: 8,
+    textAlignVertical: 'top',
   },
   sendButton: {
     width: 36,
