@@ -24,10 +24,12 @@ import * as Haptics from 'expo-haptics';
 // Hardcoded API key in code as requested
 import { BlurView } from 'expo-blur';
 import { Animated, Easing } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { DEFAULT_SETTINGS } from '@/constants/settings';
 import { AppSettings } from '@/types/settings';
 import { VeniceModel } from '@/types/venice';
 import { loadStoredSettings, persistSettings } from '@/utils/settingsStorage';
+import { theme } from '@/constants/theme';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -636,7 +638,7 @@ export default function ChatScreen() {
         {msg.thinking && (
           <View style={styles.thinkingContainer}>
             <View style={styles.thinkingHeader}>
-              <Ionicons name="bulb-outline" size={16} color="#9CA3AF" />
+              <Ionicons name="bulb-outline" size={16} color={palette.accentStrong} />
               <Text style={styles.thinkingLabel}>Thinking</Text>
             </View>
             <Text style={styles.thinkingText} selectable>{msg.thinking}</Text>
@@ -693,7 +695,7 @@ export default function ChatScreen() {
             style={styles.copyButton}
             onPress={() => copyToClipboard(msg.content)}
           >
-            <Ionicons name="copy-outline" size={16} color="#6B7280" />
+            <Ionicons name="copy-outline" size={16} color={palette.textSecondary} />
           </TouchableOpacity>
         </View>
 
@@ -799,7 +801,7 @@ export default function ChatScreen() {
           </View>
 
           {settings.model === item.id && (
-            <Ionicons name="checkmark-circle" size={24} color="#4CAF50" />
+            <Ionicons name="checkmark-circle" size={24} color={palette.accentStrong} />
           )}
         </TouchableOpacity>
       );
@@ -885,21 +887,22 @@ export default function ChatScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView 
-        style={styles.container} 
+      <StatusBar style="light" />
+      <KeyboardAvoidingView
+        style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         {/* Header */}
-        <BlurView intensity={40} tint="light" style={styles.header}>
+        <BlurView intensity={65} tint="dark" style={styles.header}>
           <View style={styles.headerLeft}>
             <View style={styles.logoContainer}>
               <Text style={styles.logoIcon}>✨</Text>
               <Text style={styles.logoText}>vGPT</Text>
             </View>
           </View>
-          
+
           <View style={styles.headerRight}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.modelSelector}
               onPress={() => setShowModelPicker(true)}
               activeOpacity={0.8}
@@ -907,23 +910,23 @@ export default function ChatScreen() {
               <Text style={styles.modelText}>
                 {getModelDisplayName(settings.model)}
               </Text>
-              <Ionicons name="chevron-down" size={16} color="#FF6B47" />
+              <Ionicons name="chevron-down" size={16} color={palette.accentStrong} />
             </TouchableOpacity>
 
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.settingsButton}
               onPress={() => router.push('/settings')}
               activeOpacity={0.8}
             >
-              <Ionicons name="settings" size={20} color="#FF6B47" />
+              <Ionicons name="settings" size={20} color={palette.accentStrong} />
             </TouchableOpacity>
 
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.newChatButton}
               onPress={handleNewChat}
               activeOpacity={0.8}
             >
-              <Ionicons name="add" size={24} color="#FF6B47" />
+              <Ionicons name="add" size={24} color={palette.accentStrong} />
             </TouchableOpacity>
           </View>
         </BlurView>
@@ -989,16 +992,16 @@ export default function ChatScreen() {
           <View style={styles.inputWrapper}>
             <View style={styles.leftActions}>
               <TouchableOpacity onPress={pickImageFromLibrary} style={styles.iconButton} activeOpacity={0.8}>
-                <Ionicons name="image-outline" size={20} color="#6B7280" />
+                <Ionicons name="image-outline" size={20} color={palette.textSecondary} />
               </TouchableOpacity>
               <TouchableOpacity onPress={takePhotoWithCamera} style={styles.iconButton} activeOpacity={0.8}>
-                <Ionicons name="camera-outline" size={20} color="#6B7280" />
+                <Ionicons name="camera-outline" size={20} color={palette.textSecondary} />
               </TouchableOpacity>
             </View>
             <TextInput
               style={styles.textInput}
               placeholder="Message..."
-              placeholderTextColor="#999"
+              placeholderTextColor={palette.textMuted}
               value={message}
               onChangeText={setMessage}
               multiline
@@ -1060,30 +1063,38 @@ export default function ChatScreen() {
   );
 }
 
+const palette = theme.colors;
+const space = theme.spacing;
+const radii = theme.radius;
+const fonts = theme.fonts;
+const shadow = theme.shadows;
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: palette.background,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: palette.background,
   },
   emptyModelsText: {
     fontSize: 16,
-    color: '#6B7280',
-    fontWeight: '500',
+    color: palette.textMuted,
+    fontFamily: fonts.medium,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: 'white',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    paddingHorizontal: space.xl,
+    paddingVertical: space.lg,
+    backgroundColor: palette.surface,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: palette.divider,
+    ...shadow.subtle,
   },
   headerLeft: {
     flexDirection: 'row',
@@ -1092,90 +1103,112 @@ const styles = StyleSheet.create({
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: space.sm,
   },
   logoContainer: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   logoIcon: {
-    fontSize: 20,
-    marginRight: 8,
+    fontSize: 24,
+    marginRight: space.sm,
+    color: palette.accent,
   },
   logoText: {
     fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
+    color: palette.textPrimary,
+    fontFamily: fonts.semibold,
+    letterSpacing: 0.3,
   },
   modelSelector: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFF5F3',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
+    backgroundColor: palette.accentSoft,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
+    borderRadius: radii.pill,
     borderWidth: 1,
-    borderColor: '#FFE5E0',
+    borderColor: palette.accent,
+    shadowColor: palette.glow,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 4,
   },
   modelText: {
     fontSize: 14,
-    color: '#FF6B47',
-    marginRight: 4,
-    fontWeight: '500',
+    color: palette.accentStrong,
+    marginRight: space.xs,
+    fontFamily: fonts.medium,
+    letterSpacing: 0.4,
   },
   settingsButton: {
-    padding: 8,
+    padding: space.sm,
+    borderRadius: radii.sm,
+    backgroundColor: palette.surfaceElevated,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   newChatButton: {
-    padding: 8,
+    padding: space.sm,
+    borderRadius: radii.sm,
+    backgroundColor: palette.surfaceElevated,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   messagesContainer: {
     flex: 1,
+    backgroundColor: palette.backgroundMuted,
   },
   emptyState: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 40,
+    paddingHorizontal: space.xxl,
   },
   messagesContent: {
-    paddingVertical: 16,
+    paddingVertical: space.xl,
+    paddingHorizontal: space.lg,
   },
   welcomeContainer: {
     alignItems: 'center',
+    gap: space.md,
   },
   welcomeIconContainer: {
     position: 'relative',
-    marginBottom: 32,
+    marginBottom: space.xl,
   },
   welcomeIcon: {
-    fontSize: 80,
+    fontSize: 84,
     textAlign: 'center',
+    color: palette.accent,
   },
   sparkleIcon: {
     fontSize: 20,
     position: 'absolute',
     top: -10,
-    right: -10,
-    opacity: 0.6,
+    right: -12,
+    opacity: 0.65,
+    color: palette.accentStrong,
   },
   welcomeTitle: {
     fontSize: 28,
-    fontWeight: '700',
-    color: '#1A1A1A',
-    marginBottom: 12,
+    color: palette.textPrimary,
+    fontFamily: fonts.semibold,
     textAlign: 'center',
+    letterSpacing: 0.6,
   },
   welcomeSubtitle: {
-    fontSize: 17,
-    color: '#666',
+    fontSize: 16,
+    color: palette.textSecondary,
     textAlign: 'center',
     lineHeight: 24,
-    paddingHorizontal: 20,
+    paddingHorizontal: space.xl,
+    fontFamily: fonts.regular,
   },
   messageContainer: {
-    paddingHorizontal: 16,
-    marginVertical: 4,
+    paddingVertical: space.sm,
+    paddingHorizontal: space.lg,
   },
   userMessageContainer: {
     alignItems: 'flex-end',
@@ -1184,268 +1217,260 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   messageBubble: {
-    maxWidth: '80%',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 20,
+    maxWidth: '88%',
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+    borderRadius: radii.lg,
   },
   userBubble: {
-    backgroundColor: '#FF6B47',
-    borderBottomRightRadius: 6,
-    shadowColor: '#FF6B47',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
+    backgroundColor: palette.accent,
+    borderBottomRightRadius: radii.sm,
+    ...shadow.elevated,
   },
   assistantBubble: {
-    backgroundColor: 'white',
-    borderBottomLeftRadius: 6,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 2,
+    backgroundColor: palette.surfaceElevated,
+    borderBottomLeftRadius: radii.sm,
     borderWidth: 1,
-    borderColor: '#F0F0F0',
+    borderColor: palette.border,
     position: 'relative',
-    paddingTop: 16, // Extra padding for copy button
+    paddingTop: space.lg,
+    paddingBottom: space.md,
+    ...shadow.subtle,
   },
   messageText: {
     fontSize: 16,
-    lineHeight: 22,
+    lineHeight: 24,
+    fontFamily: fonts.regular,
   },
   userText: {
-    color: 'white',
+    color: palette.textPrimary,
   },
   assistantText: {
-    color: '#333',
+    color: palette.textPrimary,
   },
   referencesContainer: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-    gap: 8,
+    marginTop: space.md,
+    paddingTop: space.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: palette.divider,
+    gap: space.sm,
   },
   referencesTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#6B7280',
+    fontSize: 12,
+    fontFamily: fonts.medium,
+    color: palette.textMuted,
     textTransform: 'uppercase',
-    letterSpacing: 0.8,
+    letterSpacing: 1,
   },
   referenceItem: {
-    backgroundColor: '#F9FAFB',
-    borderRadius: 10,
-    padding: 10,
+    backgroundColor: palette.surfaceActive,
+    borderRadius: radii.md,
+    padding: space.md,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: palette.border,
   },
   referenceText: {
     fontSize: 14,
-    color: '#1F2937',
-    fontWeight: '500',
+    color: palette.textPrimary,
+    fontFamily: fonts.medium,
   },
   referenceSnippet: {
-    marginTop: 4,
+    marginTop: space.xs,
     fontSize: 13,
-    color: '#6B7280',
+    color: palette.textMuted,
     lineHeight: 18,
   },
   loadingMessage: {
-    paddingHorizontal: 16,
-    marginVertical: 4,
+    paddingHorizontal: space.lg,
+    marginVertical: space.xs,
     alignItems: 'flex-start',
   },
   fetchingContainer: {
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingVertical: space.sm,
+    paddingHorizontal: space.lg,
   },
   fetchingText: {
     fontSize: 14,
-    color: '#6B7280',
-    fontWeight: '500',
-    marginBottom: 8,
-    letterSpacing: 0.5,
+    color: palette.textSecondary,
+    fontFamily: fonts.medium,
+    marginBottom: space.sm,
+    letterSpacing: 0.3,
   },
   progressBarContainer: {
-    width: 120,
+    width: 140,
     height: 4,
-    backgroundColor: '#F3F4F6',
-    borderRadius: 2,
+    backgroundColor: palette.borderMuted,
+    borderRadius: radii.sm,
     overflow: 'hidden',
     position: 'relative',
   },
   progressBar: {
     height: '100%',
-    backgroundColor: '#FF6B47',
-    borderRadius: 2,
+    backgroundColor: palette.accent,
   },
   shimmerEffect: {
     position: 'absolute',
     top: 0,
     left: 0,
-    right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-    width: 40,
+    width: 60,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
   },
   attachmentsBar: {
-    maxHeight: 72,
-    marginBottom: 8,
+    maxHeight: 80,
+    marginBottom: space.sm,
   },
   attachmentsContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 4,
-    paddingBottom: 8,
+    paddingHorizontal: space.sm,
+    paddingBottom: space.sm,
+    gap: space.sm,
   },
   attachmentItem: {
-    width: 56,
-    height: 56,
-    borderRadius: 10,
+    width: 60,
+    height: 60,
+    borderRadius: radii.md,
     overflow: 'hidden',
     position: 'relative',
-    marginRight: 8,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   attachmentImage: {
     width: '100%',
     height: '100%',
-    borderRadius: 10,
   },
   removeAttachmentBtn: {
     position: 'absolute',
-    top: 4,
-    right: 4,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    top: 6,
+    right: 6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(12, 12, 12, 0.65)',
   },
   leftActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginRight: 8,
+    gap: space.sm,
+    marginRight: space.md,
   },
   iconButton: {
-    width: 32,
-    height: 32,
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 16,
+    borderRadius: 20,
+    backgroundColor: palette.surfaceActive,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   sentImagesRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 6,
+    gap: space.sm,
+    marginTop: space.sm,
   },
   sentImage: {
-    width: 140,
-    height: 140,
-    borderRadius: 12,
+    width: 150,
+    height: 150,
+    borderRadius: radii.md,
   },
   inputContainer: {
-    backgroundColor: 'white',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#E8E8E8',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 5,
+    backgroundColor: palette.surface,
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    paddingBottom: space.xl,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: palette.divider,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    backgroundColor: '#F8F9FA',
-    borderRadius: 26,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    minHeight: 52,
+    backgroundColor: palette.inputBackground,
+    borderRadius: radii.lg,
     borderWidth: 1,
-    borderColor: '#E8E8E8',
+    borderColor: palette.inputBorder,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
   },
   textInput: {
     flex: 1,
     fontSize: 16,
-    color: '#333',
-    maxHeight: 120,
-    paddingVertical: 8,
+    color: palette.textPrimary,
+    maxHeight: 140,
+    paddingVertical: space.xs,
     textAlignVertical: 'top',
+    fontFamily: fonts.regular,
   },
   sendButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#FF6B47',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: palette.accent,
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 10,
-    shadowColor: '#FF6B47',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
+    marginLeft: space.md,
+    shadowColor: palette.glow,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.6,
+    shadowRadius: 12,
+    elevation: 6,
   },
   sendButtonDisabled: {
-    backgroundColor: '#D0D0D0',
-    shadowOpacity: 0.1,
+    backgroundColor: palette.borderMuted,
+    shadowOpacity: 0,
   },
   modalContainer: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: palette.backgroundMuted,
   },
   modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: 'white',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+    backgroundColor: palette.surface,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: palette.divider,
   },
   modalCancelText: {
     fontSize: 16,
-    color: '#FF6B47',
-    fontWeight: '500',
+    color: palette.accent,
+    fontFamily: fonts.medium,
   },
   modalTitle: {
     flex: 1,
     fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
+    fontFamily: fonts.semibold,
+    color: palette.textPrimary,
     textAlign: 'center',
   },
   headerSpacer: {
     width: 80,
   },
   modelList: {
-    paddingVertical: 8,
+    paddingVertical: space.md,
   },
   modelItem: {
-    backgroundColor: 'white',
-    marginHorizontal: 16,
-    marginVertical: 4,
-    padding: 16,
-    borderRadius: 12,
+    backgroundColor: palette.surfaceElevated,
+    marginHorizontal: space.lg,
+    marginVertical: space.xs,
+    padding: space.lg,
+    borderRadius: radii.lg,
     flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    borderWidth: 1,
+    borderColor: palette.border,
+    ...shadow.subtle,
   },
   selectedModelItem: {
-    borderWidth: 2,
-    borderColor: '#4CAF50',
+    borderColor: palette.accent,
+    shadowColor: palette.glow,
+    shadowOpacity: 0.5,
+    elevation: 10,
   },
   modelInfo: {
     flex: 1,
@@ -1453,148 +1478,158 @@ const styles = StyleSheet.create({
   modelHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: space.xs,
   },
   modelName: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
+    fontFamily: fonts.semibold,
+    color: palette.textPrimary,
     flex: 1,
   },
   betaTag: {
     fontSize: 10,
-    fontWeight: '700',
-    color: '#FF6B47',
-    backgroundColor: '#FFF5F3',
-    paddingHorizontal: 6,
+    fontFamily: fonts.medium,
+    color: palette.accentStrong,
+    backgroundColor: palette.accentSoft,
+    paddingHorizontal: space.sm,
     paddingVertical: 2,
-    borderRadius: 4,
+    borderRadius: radii.pill,
     borderWidth: 1,
-    borderColor: '#FFE5E0',
+    borderColor: palette.accent,
   },
   modelId: {
     fontSize: 13,
-    color: '#666',
-    marginBottom: 4,
+    color: palette.textMuted,
+    marginBottom: space.xs,
+    fontFamily: fonts.medium,
   },
   contextTokens: {
     fontSize: 12,
-    color: '#888',
-    marginBottom: 8,
+    color: palette.textMuted,
+    marginBottom: space.sm,
+    fontFamily: fonts.regular,
   },
   modelCapabilities: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 4,
+    gap: space.xs,
   },
   capabilityTag: {
     fontSize: 12,
-    color: '#4A90E2',
-    backgroundColor: '#E3F2FD',
-    paddingHorizontal: 8,
+    color: palette.accentStrong,
+    backgroundColor: palette.accentSoft,
+    paddingHorizontal: space.sm,
     paddingVertical: 2,
-    borderRadius: 12,
+    borderRadius: radii.pill,
   },
   modelPricing: {
     alignItems: 'flex-end',
-    marginRight: 12,
+    marginRight: space.md,
   },
   pricingText: {
     fontSize: 12,
-    color: '#666',
+    color: palette.textMuted,
+    fontFamily: fonts.medium,
   },
-  // New styles for enhanced message display
   thinkingContainer: {
-    backgroundColor: '#F8F9FA',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: '#E5E7EB',
+    marginTop: space.sm,
+    backgroundColor: palette.surfaceActive,
+    borderRadius: radii.md,
+    padding: space.md,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   thinkingHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: space.xs,
+    gap: space.xs,
   },
   thinkingLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#9CA3AF',
-    marginLeft: 4,
+    fontSize: 13,
+    color: palette.accentStrong,
+    fontFamily: fonts.medium,
+    letterSpacing: 0.3,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
   },
   thinkingText: {
-    fontSize: 14,
-    color: '#6B7280',
+    fontSize: 13,
+    color: palette.textSecondary,
     lineHeight: 20,
     fontStyle: 'italic',
   },
   copyButton: {
     position: 'absolute',
-    top: 8,
-    right: 8,
-    padding: 6,
-    borderRadius: 6,
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    top: space.md,
+    right: space.md,
+    paddingVertical: space.xs,
+    paddingHorizontal: space.sm,
+    borderRadius: radii.pill,
+    backgroundColor: palette.surfaceActive,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   metricsContainer: {
-    marginTop: 8,
-    backgroundColor: '#F8F9FA',
-    borderRadius: 8,
-    padding: 8,
+    marginTop: space.md,
+    backgroundColor: palette.surfaceActive,
+    borderRadius: radii.md,
+    padding: space.md,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: palette.border,
+    gap: space.sm,
   },
   metricsHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
   },
   modelDisplayName: {
-    fontSize: 12,
-    color: '#6B7280',
-    fontWeight: '600',
+    fontSize: 13,
+    color: palette.textSecondary,
+    fontFamily: fonts.medium,
   },
   timestamp: {
-    fontSize: 11,
-    color: '#9CA3AF',
+    fontSize: 12,
+    color: palette.textMuted,
+    fontFamily: fonts.medium,
   },
   tokenMetrics: {
-    marginBottom: 6,
+    marginBottom: space.xs,
   },
   tokenInfo: {
     fontSize: 12,
-    color: '#4B5563',
-    lineHeight: 16,
+    color: palette.textMuted,
+    lineHeight: 18,
+    fontFamily: fonts.regular,
   },
   inputTokens: {
-    color: '#3B82F6',
-    fontWeight: '600',
+    color: palette.textSecondary,
+    fontFamily: fonts.medium,
   },
   outputTokens: {
-    color: '#10B981',
-    fontWeight: '600',
+    color: palette.accentStrong,
+    fontFamily: fonts.semibold,
   },
   costDisplay: {
-    color: '#10B981',
-    fontWeight: '700',
+    color: palette.accentStrong,
+    fontFamily: fonts.semibold,
   },
   performanceRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: space.md,
   },
   performanceMetric: {
-    fontSize: 11,
-    color: '#6B7280',
+    fontSize: 12,
+    color: palette.textSecondary,
     flexDirection: 'row',
     alignItems: 'center',
+    gap: space.xs,
+    fontFamily: fonts.regular,
   },
   metricNumber: {
-    fontWeight: '600',
-    color: '#374151',
+    fontFamily: fonts.semibold,
+    color: palette.textPrimary,
   },
 });

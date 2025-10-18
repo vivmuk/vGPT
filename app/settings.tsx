@@ -16,10 +16,12 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Slider from '@react-native-community/slider';
 import * as Haptics from 'expo-haptics';
+import { StatusBar } from 'expo-status-bar';
 import { DEFAULT_SETTINGS } from '@/constants/settings';
 import { AppSettings, WebSearchMode } from '@/types/settings';
 import { VeniceModel } from '@/types/venice';
 import { loadStoredSettings, persistSettings } from '@/utils/settingsStorage';
+import { theme } from '@/constants/theme';
 
 const getConstraintNumber = (constraint: any): number | undefined => {
   if (constraint == null) return undefined;
@@ -70,6 +72,12 @@ const resolveUsdPrice = (pricingSection: unknown): number | undefined => {
 
   return undefined;
 };
+
+const palette = theme.colors;
+const space = theme.spacing;
+const radii = theme.radius;
+const fonts = theme.fonts;
+const shadow = theme.shadows;
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -199,7 +207,7 @@ export default function SettingsScreen() {
     max: number,
     step: number,
     settingKey: keyof AppSettings,
-    color: string = '#FF6B47'
+    color: string = palette.accent
   ) => (
     <View style={styles.settingContainer}>
       <View style={styles.settingHeader}>
@@ -232,7 +240,7 @@ export default function SettingsScreen() {
           value={value}
           onValueChange={(val: number) => handleSliderChange(settingKey, val)}
           minimumTrackTintColor={color}
-          maximumTrackTintColor="#E0E0E0"
+          maximumTrackTintColor={palette.border}
           thumbTintColor={color}
         />
 
@@ -308,7 +316,7 @@ export default function SettingsScreen() {
         </View>
 
         {settings.model === item.id && (
-          <Ionicons name="checkmark-circle" size={24} color="#4CAF50" />
+          <Ionicons name="checkmark-circle" size={24} color={palette.accentStrong} />
         )}
       </TouchableOpacity>
     );
@@ -318,13 +326,14 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar style="light" />
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.backButton}
           onPress={() => router.back()}
         >
-          <Ionicons name="arrow-back" size={24} color="#FF6B47" />
+          <Ionicons name="arrow-back" size={24} color={palette.accentStrong} />
         </TouchableOpacity>
         
         <Text style={styles.headerTitle}>Settings</Text>
@@ -346,7 +355,7 @@ export default function SettingsScreen() {
             <Text style={styles.selectedModelText}>
               {getModelDisplayName(settings.model)}
             </Text>
-            <Ionicons name="chevron-forward" size={20} color="#CCC" />
+            <Ionicons name="chevron-forward" size={20} color={palette.textMuted} />
           </View>
         </TouchableOpacity>
 
@@ -394,10 +403,10 @@ export default function SettingsScreen() {
           Math.max(currentModelMaxTokens || 8192, settings.maxTokens || 1),
           1,
           'maxTokens',
-          '#4CAF50'
+          palette.success
         )}
-        {renderSliderSetting('Top K', '🔢', settings.topK, 1, 100, 1, 'topK', '#9C27B0')}
-        {renderSliderSetting('Repetition Penalty', '🔄', settings.repetitionPenalty, 0.5, 2, 0.01, 'repetitionPenalty', '#FF9800')}
+        {renderSliderSetting('Top K', '🔢', settings.topK, 1, 100, 1, 'topK', palette.warning)}
+        {renderSliderSetting('Repetition Penalty', '🔄', settings.repetitionPenalty, 0.5, 2, 0.01, 'repetitionPenalty', palette.danger)}
       </ScrollView>
 
       {/* Model Picker Modal */}
@@ -417,7 +426,7 @@ export default function SettingsScreen() {
           
           {isLoadingModels ? (
             <View style={styles.loadingContainer}>
-              <ActivityIndicator size="small" color="#FF6B47" />
+              <ActivityIndicator size="small" color={palette.accent} />
               <Text style={styles.loadingText}>Loading models...</Text>
             </View>
           ) : (
@@ -442,257 +451,271 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: palette.background,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: palette.background,
   },
   loadingText: {
-    marginTop: 8,
+    marginTop: space.sm,
     fontSize: 14,
-    color: '#6B7280',
-    fontWeight: '500',
+    color: palette.textSecondary,
+    fontFamily: fonts.medium,
   },
   emptyModelsText: {
     fontSize: 16,
-    color: '#6B7280',
-    fontWeight: '500',
+    color: palette.textSecondary,
+    fontFamily: fonts.medium,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: 'white',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+    backgroundColor: palette.surface,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: palette.divider,
+    ...shadow.subtle,
   },
   backButton: {
-    padding: 8,
+    padding: space.sm,
+    borderRadius: radii.sm,
+    backgroundColor: palette.surfaceActive,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   headerTitle: {
     flex: 1,
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
+    fontSize: 20,
+    color: palette.textPrimary,
     textAlign: 'center',
+    fontFamily: fonts.semibold,
+    letterSpacing: 0.5,
   },
   headerSpacer: {
     width: 40,
   },
   content: {
     flex: 1,
-    paddingVertical: 16,
+    paddingVertical: space.xl,
   },
   settingContainer: {
-    backgroundColor: 'white',
-    marginHorizontal: 16,
-    marginVertical: 8,
-    padding: 20,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    backgroundColor: palette.surfaceElevated,
+    marginHorizontal: space.lg,
+    marginVertical: space.sm,
+    padding: space.lg,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: palette.border,
+    gap: space.md,
+    ...shadow.subtle,
   },
   settingHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
   },
   settingTitleContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: space.sm,
   },
   settingIcon: {
     fontSize: 20,
-    marginRight: 12,
+    color: palette.accentStrong,
   },
   settingTitle: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
+    color: palette.textPrimary,
+    fontFamily: fonts.semibold,
   },
   settingValue: {
     fontSize: 16,
-    fontWeight: '600',
+    color: palette.accentStrong,
+    fontFamily: fonts.semibold,
   },
   settingExplanation: {
     fontSize: 14,
-    color: '#666',
+    color: palette.textSecondary,
     lineHeight: 20,
-    marginBottom: 16,
+    fontFamily: fonts.regular,
   },
   sliderContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: space.md,
   },
   sliderButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F8F8F8',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: palette.surfaceActive,
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   slider: {
     flex: 1,
     height: 40,
   },
   modelSelector: {
-    backgroundColor: 'white',
-    marginHorizontal: 16,
-    marginVertical: 8,
-    padding: 20,
-    borderRadius: 12,
+    backgroundColor: palette.surfaceElevated,
+    marginHorizontal: space.lg,
+    marginVertical: space.sm,
+    padding: space.lg,
+    borderRadius: radii.lg,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    borderWidth: 1,
+    borderColor: palette.border,
+    ...shadow.subtle,
   },
   modelSelectorRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: space.sm,
   },
   selectedModelText: {
-    fontSize: 14,
-    color: '#666',
-    fontWeight: '500',
+    color: palette.textPrimary,
+    fontFamily: fonts.medium,
   },
   webSearchButtons: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
+    gap: space.sm,
+    marginTop: space.md,
   },
   webSearchButton: {
     flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    backgroundColor: '#F8F8F8',
+    paddingVertical: space.md,
+    paddingHorizontal: space.lg,
+    borderRadius: radii.md,
+    backgroundColor: palette.surfaceActive,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   webSearchButtonActive: {
-    backgroundColor: '#4A90E2',
+    backgroundColor: palette.accent,
+    borderColor: palette.accent,
   },
   webSearchButtonText: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#666',
+    color: palette.textSecondary,
+    fontFamily: fonts.medium,
   },
   webSearchButtonTextActive: {
-    color: 'white',
+    color: palette.textPrimary,
+    fontFamily: fonts.medium,
   },
   modalContainer: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: palette.backgroundMuted,
   },
   modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: 'white',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+    backgroundColor: palette.surface,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: palette.divider,
   },
   modalCancelText: {
     fontSize: 16,
-    color: '#FF6B47',
-    fontWeight: '500',
+    color: palette.accent,
+    fontFamily: fonts.medium,
   },
   modalTitle: {
     flex: 1,
     fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
+    fontFamily: fonts.semibold,
+    color: palette.textPrimary,
     textAlign: 'center',
   },
   modelList: {
-    paddingVertical: 8,
+    paddingVertical: space.md,
   },
   modelItem: {
-    backgroundColor: 'white',
-    marginHorizontal: 16,
-    marginVertical: 4,
-    padding: 16,
-    borderRadius: 12,
+    backgroundColor: palette.surfaceElevated,
+    marginHorizontal: space.lg,
+    marginVertical: space.xs,
+    padding: space.lg,
+    borderRadius: radii.lg,
     flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    borderWidth: 1,
+    borderColor: palette.border,
+    ...shadow.subtle,
   },
   selectedModelItem: {
-    borderWidth: 2,
-    borderColor: '#4CAF50',
+    borderColor: palette.accent,
+    shadowColor: palette.glow,
+    shadowOpacity: 0.5,
+    elevation: 8,
   },
   modelInfo: {
     flex: 1,
+    gap: space.xs,
   },
   modelHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: space.xs,
+    gap: space.xs,
   },
   modelName: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
+    fontFamily: fonts.semibold,
+    color: palette.textPrimary,
     flex: 1,
   },
   betaTag: {
     fontSize: 10,
-    fontWeight: '700',
-    color: '#FF6B47',
-    backgroundColor: '#FFF5F3',
-    paddingHorizontal: 6,
+    fontFamily: fonts.medium,
+    color: palette.accentStrong,
+    backgroundColor: palette.accentSoft,
+    paddingHorizontal: space.sm,
     paddingVertical: 2,
-    borderRadius: 4,
+    borderRadius: radii.pill,
     borderWidth: 1,
-    borderColor: '#FFE5E0',
+    borderColor: palette.accent,
   },
   modelId: {
     fontSize: 13,
-    color: '#666',
-    marginBottom: 4,
+    color: palette.textMuted,
+    fontFamily: fonts.medium,
   },
   contextTokens: {
     fontSize: 12,
-    color: '#888',
-    marginBottom: 8,
+    color: palette.textMuted,
+    fontFamily: fonts.regular,
   },
   modelCapabilities: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 4,
+    gap: space.xs,
   },
   capabilityTag: {
     fontSize: 12,
-    color: '#4A90E2',
-    backgroundColor: '#E3F2FD',
-    paddingHorizontal: 8,
+    color: palette.accentStrong,
+    backgroundColor: palette.accentSoft,
+    paddingHorizontal: space.sm,
     paddingVertical: 2,
-    borderRadius: 12,
+    borderRadius: radii.pill,
   },
   modelPricing: {
     alignItems: 'flex-end',
-    marginRight: 12,
+    marginRight: space.md,
+    gap: space.xs,
   },
   pricingText: {
     fontSize: 12,
-    color: '#666',
+    color: palette.textMuted,
+    fontFamily: fonts.medium,
   },
 });
