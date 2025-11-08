@@ -22,6 +22,7 @@ import { AppSettings, WebSearchMode } from '@/types/settings';
 import { VeniceModel } from '@/types/venice';
 import { loadStoredSettings, persistSettings } from '@/utils/settingsStorage';
 import { theme } from '@/constants/theme';
+import { VENICE_API_KEY, VENICE_MODELS_ENDPOINT } from '@/constants/venice';
 
 const getConstraintNumber = (constraint: any): number | undefined => {
   if (constraint == null) return undefined;
@@ -113,21 +114,26 @@ export default function SettingsScreen() {
   const loadModels = useCallback(async () => {
     setIsLoadingModels(true);
     try {
-      const apiKey = "ntmhtbP2fr_pOQsmuLPuN_nm6lm2INWKiNcvrdEfEC";
-
-      const response = await fetch("https://api.venice.ai/api/v1/models", {
-        method: "GET",
+      const response = await fetch(VENICE_MODELS_ENDPOINT, {
+        method: 'GET',
         headers: {
-          "Authorization": `Bearer ${apiKey}`,
+          Authorization: `Bearer ${VENICE_API_KEY}`,
         },
       });
 
       if (!response.ok) {
-        throw new Error(`Venice API error: ${response.status}`);
+        const errorText = await response.text();
+        throw new Error(`Venice API error: ${response.status} - ${errorText}`);
       }
 
       const data = await response.json();
-      setModels(data.data || []);
+      const incomingModels: VeniceModel[] = Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data?.models)
+        ? data.models
+        : [];
+
+      setModels(incomingModels);
     } catch (error) {
       console.error('Failed to load models:', error);
       Alert.alert('Error', 'Failed to load available models');

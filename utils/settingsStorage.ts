@@ -8,9 +8,7 @@ const SETTINGS_FILE_PATH = FileSystem.documentDirectory
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
-type SettingsLike = Record<string, JsonValue>;
-
-export async function loadStoredSettings<T extends SettingsLike>(defaults: T): Promise<T> {
+export async function loadStoredSettings<T>(defaults: T): Promise<T> {
   try {
     if (Platform.OS === 'web') {
       if (typeof localStorage === 'undefined') {
@@ -51,7 +49,7 @@ export async function loadStoredSettings<T extends SettingsLike>(defaults: T): P
   }
 }
 
-export async function persistSettings<T extends SettingsLike>(settings: T): Promise<void> {
+export async function persistSettings<T>(settings: T): Promise<void> {
   try {
     if (Platform.OS === 'web') {
       if (typeof localStorage === 'undefined') {
