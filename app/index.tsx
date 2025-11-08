@@ -831,29 +831,28 @@ export default function ChatScreen() {
     setImageError(null);
 
     try {
+      const width = clampToConstraint(imageOptions.width, currentImageModel, 'width', settings.imageWidth);
+      const height = clampToConstraint(imageOptions.height, currentImageModel, 'height', settings.imageHeight);
+
       const payload: Record<string, any> = {
         model: currentImageModel.id,
         prompt,
-        response_format: 'b64_json',
+        width,
+        height,
+        format: 'webp',
       };
 
-      if (currentImageModel && currentImageModel.model_spec?.constraints) {
-        if (currentImageModel.model_spec.constraints.steps != null) {
-          payload.steps = clampToConstraint(imageOptions.steps, currentImageModel, 'steps', settings.imageSteps);
-        }
-        const width = clampToConstraint(imageOptions.width, currentImageModel, 'width', settings.imageWidth);
-        const height = clampToConstraint(imageOptions.height, currentImageModel, 'height', settings.imageHeight);
-        payload.width = width;
-        payload.height = height;
+      if (currentImageModel?.model_spec?.constraints?.steps != null) {
+        payload.steps = clampToConstraint(imageOptions.steps, currentImageModel, 'steps', settings.imageSteps);
+      }
 
-        if (currentImageModel.model_spec.constraints.guidance_scale != null) {
-          payload.guidance_scale = clampToConstraint(
-            imageOptions.guidance,
-            currentImageModel,
-            'guidance_scale',
-            settings.imageGuidanceScale
-          );
-        }
+      if (currentImageModel?.model_spec?.constraints?.guidance_scale != null) {
+        payload.guidance_scale = clampToConstraint(
+          imageOptions.guidance,
+          currentImageModel,
+          'guidance_scale',
+          settings.imageGuidanceScale
+        );
       }
 
       const response = await fetch(VENICE_IMAGE_GENERATIONS_ENDPOINT, {
@@ -871,15 +870,41 @@ export default function ChatScreen() {
       }
 
       const data = await response.json();
-      const firstImage = data?.data?.[0];
-      const base64 = firstImage?.b64_json || firstImage?.b64 || firstImage?.image_base64;
-      const imageUrl = firstImage?.url;
+      const imagesArray = Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data?.images)
+        ? data.images
+        : Array.isArray(data?.data?.images)
+        ? data.data.images
+        : Array.isArray(data?.outputs)
+        ? data.outputs
+        : null;
+
+      const firstImage = imagesArray?.[0] || data?.data || data?.image || data;
+      const base64 =
+        firstImage?.b64_json ||
+        firstImage?.b64 ||
+        firstImage?.image_base64 ||
+        firstImage?.base64 ||
+        firstImage?.image;
+      const imageUrl =
+        firstImage?.url ||
+        firstImage?.image_url ||
+        firstImage?.imageUrl ||
+        firstImage?.signed_url ||
+        firstImage?.signedUrl;
 
       if (!base64 && !imageUrl) {
         throw new Error('Image response did not include content.');
       }
 
-      const imageData = base64 ? `data:image/png;base64,${base64}` : imageUrl;
+      const mimeType =
+        firstImage?.mime_type ||
+        firstImage?.mimeType ||
+        (typeof firstImage?.format === 'string' ? `image/${firstImage.format}` : null) ||
+        'image/webp';
+
+      const imageData = base64 ? `data:${mimeType};base64,${base64}` : imageUrl;
       const generated: GeneratedImage = {
         id: `${Date.now()}`,
         prompt,
