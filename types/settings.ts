@@ -13,4 +13,9 @@ export interface AppSettings {
   includeSearchResults: boolean;
   stripThinking: boolean;
   disableThinking: boolean;
+  imageModel: string;
+  imageSteps: number;
+  imageWidth: number;
+  imageHeight: number;
+  imageGuidanceScale: number;
 }
