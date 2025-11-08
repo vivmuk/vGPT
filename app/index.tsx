@@ -870,6 +870,8 @@ export default function ChatScreen() {
       }
 
       const data = await response.json();
+      
+      // Handle different response formats from Venice API
       const imagesArray = Array.isArray(data?.data)
         ? data.data
         : Array.isArray(data?.images)
@@ -881,27 +883,44 @@ export default function ChatScreen() {
         : null;
 
       const firstImage = imagesArray?.[0] || data?.data || data?.image || data;
+      
+      // Extract base64 or URL from response
       const base64 =
         firstImage?.b64_json ||
         firstImage?.b64 ||
         firstImage?.image_base64 ||
         firstImage?.base64 ||
-        firstImage?.image;
+        firstImage?.image ||
+        data?.b64_json ||
+        data?.b64 ||
+        data?.image_base64 ||
+        data?.base64 ||
+        data?.image;
+      
       const imageUrl =
         firstImage?.url ||
         firstImage?.image_url ||
         firstImage?.imageUrl ||
         firstImage?.signed_url ||
-        firstImage?.signedUrl;
+        firstImage?.signedUrl ||
+        data?.url ||
+        data?.image_url ||
+        data?.imageUrl ||
+        data?.signed_url ||
+        data?.signedUrl;
 
       if (!base64 && !imageUrl) {
+        console.error('Image response structure:', JSON.stringify(data, null, 2));
         throw new Error('Image response did not include content.');
       }
 
       const mimeType =
         firstImage?.mime_type ||
         firstImage?.mimeType ||
+        data?.mime_type ||
+        data?.mimeType ||
         (typeof firstImage?.format === 'string' ? `image/${firstImage.format}` : null) ||
+        (typeof data?.format === 'string' ? `image/${data.format}` : null) ||
         'image/webp';
 
       const imageData = base64 ? `data:${mimeType};base64,${base64}` : imageUrl;
@@ -1847,9 +1866,6 @@ export default function ChatScreen() {
                   <TouchableOpacity onPress={pickImageFromLibrary} style={styles.iconButton} activeOpacity={0.8}>
                     <Ionicons name="image-outline" size={20} color={palette.textSecondary} />
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={takePhotoWithCamera} style={styles.iconButton} activeOpacity={0.8}>
-                    <Ionicons name="camera-outline" size={20} color={palette.textSecondary} />
-                  </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.sendButton, (!message.trim() || isLoading) && styles.sendButtonDisabled]}
                     onPress={handleSend}
@@ -1985,7 +2001,7 @@ export default function ChatScreen() {
                   value={imagePrompt}
                   onChangeText={setImagePrompt}
                   multiline
-                  numberOfLines={3}
+                  numberOfLines={6}
                   maxLength={1000}
                 />
               </View>
@@ -2503,7 +2519,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 16,
     color: palette.textPrimary,
-    maxHeight: 140,
+    maxHeight: 200,
     paddingVertical: space.xs,
     paddingRight: space.sm,
     textAlignVertical: 'top',
@@ -2702,7 +2718,7 @@ const styles = StyleSheet.create({
     padding: space.md,
   },
   imagePromptInput: {
-    minHeight: 70,
+    minHeight: 150,
     fontSize: 16,
     color: palette.textPrimary,
     textAlignVertical: 'top',

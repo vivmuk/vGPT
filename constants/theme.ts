@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 
 const iosFont = 'System';
 const androidFont = 'sans-serif';
-const webFont = 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const webFont = '"Outfit", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 
 export const fonts = {
   regular: Platform.select({ ios: iosFont, android: androidFont, default: webFont }) ?? iosFont,
@@ -23,9 +23,9 @@ export const colors = {
   textPrimary: '#F4F7FB',
   textSecondary: '#A1ADC5',
   textMuted: '#6B768A',
-  accent: '#10A37F',
-  accentSoft: 'rgba(16, 163, 127, 0.12)',
-  accentStrong: '#1ABC90',
+  accent: '#FF6B35',
+  accentSoft: 'rgba(255, 107, 53, 0.12)',
+  accentStrong: '#FF8C42',
   warning: '#F97316',
   danger: '#F97066',
   success: '#34D399',
@@ -33,7 +33,7 @@ export const colors = {
   inputBackground: '#10161F',
   inputBorder: '#243041',
   divider: 'rgba(255, 255, 255, 0.06)',
-  glow: 'rgba(16, 163, 127, 0.35)',
+  glow: 'rgba(255, 107, 53, 0.35)',
 };
 
 export const spacing = {
@@ -61,7 +61,7 @@ export const shadows = {
     elevation: 8,
   },
   elevated: {
-    shadowColor: 'rgba(16, 163, 127, 0.2)',
+    shadowColor: 'rgba(255, 107, 53, 0.2)',
     shadowOffset: { width: 0, height: 16 },
     shadowOpacity: 0.3,
     shadowRadius: 32,
