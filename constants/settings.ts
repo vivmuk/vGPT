@@ -13,4 +13,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   includeSearchResults: true,
   stripThinking: false,
   disableThinking: false,
+  imageModel: '',
+  imageSteps: 25,
+  imageWidth: 1024,
+  imageHeight: 1024,
+  imageGuidanceScale: 7,
 };

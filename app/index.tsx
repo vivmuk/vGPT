@@ -11,7 +11,8 @@ import {
   Modal,
   FlatList,
   Linking,
-  ScrollView
+  ScrollView,
+  ActivityIndicator
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -56,6 +57,16 @@ interface VeniceReference {
   snippet?: string;
 }
 
+interface GeneratedImage {
+  id: string;
+  prompt: string;
+  modelId: string;
+  createdAt: number;
+  imageData: string;
+  width?: number;
+  height?: number;
+}
+
 const getConstraintNumber = (constraint: any): number | undefined => {
   if (constraint == null) return undefined;
   if (typeof constraint === 'number') return constraint;
@@ -87,6 +98,294 @@ const getModelDefaultMaxTokens = (model?: VeniceModel | null): number | undefine
   }
 
   return undefined;
+};
+
+const isImageModel = (model?: VeniceModel | null): boolean => {
+  if (!model) return false;
+  if (typeof model.type === 'string' && model.type.toLowerCase() === 'image') {
+    return true;
+  }
+
+  if (model.model_spec?.capabilities?.supportsImageGeneration) {
+    return true;
+  }
+
+  if (Array.isArray(model.model_spec?.traits)) {
+    if (model.model_spec.traits.some((trait) => trait.toLowerCase().includes('image'))) {
+      return true;
+    }
+  }
+
+  const source = model.model_spec?.modelSource?.toLowerCase() ?? '';
+  return source.includes('stable-diffusion') || source.includes('image');
+};
+
+const mistralMatcher = /mistral/i;
+
+const findMistralModel = (models: VeniceModel[]): VeniceModel | undefined => {
+  return models.find((model) => mistralMatcher.test(model.id) || mistralMatcher.test(model.model_spec?.name ?? ''));
+};
+
+const getConstraintDefaults = (model: VeniceModel | undefined | null, key: string, fallback?: number): number | undefined => {
+  if (!model) return fallback;
+  const constraints = model.model_spec?.constraints || {};
+  const value = constraints[key];
+  const numeric = getConstraintNumber(value);
+  if (typeof numeric === 'number') {
+    return numeric;
+  }
+  return fallback;
+};
+
+const clampToConstraint = (
+  value: number,
+  model: VeniceModel | undefined | null,
+  key: string,
+  fallback?: number
+): number => {
+  const constraints = model?.model_spec?.constraints || {};
+  const constraint = constraints[key];
+  if (constraint == null || typeof constraint === 'number') {
+    return constraint != null ? constraint : value;
+  }
+
+  const min = typeof constraint.min === 'number' ? constraint.min : undefined;
+  const max = typeof constraint.max === 'number' ? constraint.max : undefined;
+  const defaultValue = typeof constraint.default === 'number' ? constraint.default : fallback;
+
+  let next = value;
+  if (typeof min === 'number') {
+    next = Math.max(min, next);
+  }
+  if (typeof max === 'number') {
+    next = Math.min(max, next);
+  }
+
+  if (Number.isNaN(next)) {
+    return defaultValue ?? value;
+  }
+
+  return next;
+};
+
+const MODEL_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+
+const completionParameterConstraints: Record<string, string[]> = {
+  temperature: ['temperature'],
+  top_p: ['top_p'],
+  min_p: ['min_p'],
+  max_tokens: ['max_output_tokens', 'maxOutputTokens', 'max_tokens', 'response_tokens'],
+  top_k: ['top_k'],
+  repetition_penalty: ['repetition_penalty'],
+};
+
+const shouldIncludeCompletionParameter = (model: VeniceModel | undefined, parameter: keyof typeof completionParameterConstraints): boolean => {
+  if (!model) return true;
+  const keys = completionParameterConstraints[parameter] || [];
+  const constraints = model.model_spec?.constraints || {};
+  return keys.some((key) => Object.prototype.hasOwnProperty.call(constraints, key));
+};
+
+const getImageDimension = (model: VeniceModel | undefined, key: 'width' | 'height', fallback: number): number => {
+  const defaultValue = getConstraintDefaults(model, key, fallback);
+  return defaultValue ?? fallback;
+};
+
+const getImageSteps = (model: VeniceModel | undefined, fallback: number): number => {
+  const defaultValue = getConstraintDefaults(model, 'steps', fallback);
+  return defaultValue ?? fallback;
+};
+
+const getImageGuidance = (model: VeniceModel | undefined, fallback: number): number => {
+  const defaultValue = getConstraintDefaults(model, 'guidance_scale', fallback);
+  return defaultValue ?? fallback;
+};
+
+interface SuggestedImageSize {
+  label: string;
+  width: number;
+  height: number;
+}
+
+const buildSuggestedImageSizes = (model: VeniceModel | undefined, settings: AppSettings): SuggestedImageSize[] => {
+  const divisor = model?.model_spec?.constraints?.widthHeightDivisor || 8;
+  const baseWidth = clampToConstraint(settings.imageWidth, model, 'width', settings.imageWidth);
+  const baseHeight = clampToConstraint(settings.imageHeight, model, 'height', settings.imageHeight);
+
+  const normalize = (value: number) => Math.round(value / divisor) * divisor;
+
+  const square = normalize(Math.min(baseWidth, baseHeight));
+  const landscape = normalize(Math.max(baseWidth, Math.round((baseHeight * 4) / 3)));
+  const portrait = normalize(Math.max(baseHeight, Math.round((baseWidth * 4) / 3)));
+
+  const sizes: SuggestedImageSize[] = [
+    { label: 'Square', width: square, height: square },
+    { label: 'Portrait', width: normalize(Math.round(square * 0.75)), height: portrait },
+    { label: 'Landscape', width: landscape, height: normalize(Math.round(square * 0.75)) },
+  ];
+
+  const unique: SuggestedImageSize[] = [];
+  for (const size of sizes) {
+    if (!unique.some((entry) => entry.width === size.width && entry.height === size.height)) {
+      unique.push(size);
+    }
+  }
+
+  return unique;
+};
+
+const inlineMarkdownRegex = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[(.+?)\]\((.+?)\))/g;
+
+const renderInlineMarkdown = (text: string, keyPrefix: string) => {
+  const nodes: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let index = 0;
+
+  while ((match = inlineMarkdownRegex.exec(text)) !== null) {
+    const [fullMatch] = match;
+    const matchStart = match.index;
+    if (matchStart > lastIndex) {
+      nodes.push(
+        <Text key={`${keyPrefix}-plain-${index}`} style={styles.inlineText} selectable>
+          {text.slice(lastIndex, matchStart)}
+        </Text>
+      );
+      index += 1;
+    }
+
+    if (fullMatch.startsWith('**')) {
+      const content = fullMatch.slice(2, -2);
+      nodes.push(
+        <Text key={`${keyPrefix}-bold-${index}`} style={styles.inlineBold} selectable>
+          {content}
+        </Text>
+      );
+    } else if (fullMatch.startsWith('*')) {
+      const content = fullMatch.slice(1, -1);
+      nodes.push(
+        <Text key={`${keyPrefix}-italic-${index}`} style={styles.inlineItalic} selectable>
+          {content}
+        </Text>
+      );
+    } else if (fullMatch.startsWith('`')) {
+      const content = fullMatch.slice(1, -1);
+      nodes.push(
+        <Text key={`${keyPrefix}-code-${index}`} style={styles.inlineCode} selectable>
+          {content}
+        </Text>
+      );
+    } else if (fullMatch.startsWith('[')) {
+      const label = match?.[2] ?? '';
+      const url = match?.[3] ?? '';
+      nodes.push(
+        <Text
+          key={`${keyPrefix}-link-${index}`}
+          style={styles.inlineLink}
+          selectable
+          onPress={() => {
+            if (url) {
+              Linking.openURL(url).catch(() => {
+                Alert.alert('Unable to open link', 'The reference link could not be opened.');
+              });
+            }
+          }}
+        >
+          {label}
+        </Text>
+      );
+    }
+
+    index += 1;
+    lastIndex = matchStart + fullMatch.length;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(
+      <Text key={`${keyPrefix}-plain-${index}`} style={styles.inlineText} selectable>
+        {text.slice(lastIndex)}
+      </Text>
+    );
+  }
+
+  if (nodes.length === 0) {
+    return [
+      <Text key={`${keyPrefix}-plain`} style={styles.inlineText} selectable>
+        {text}
+      </Text>,
+    ];
+  }
+
+  return nodes;
+};
+
+const RichText: React.FC<{ content: string }> = ({ content }) => {
+  const sections = content.split(/\n{2,}/g).filter((section) => section.trim().length > 0);
+
+  if (sections.length === 0) {
+    return null;
+  }
+
+  return (
+    <View style={styles.richTextContainer}>
+      {sections.map((section, sectionIndex) => {
+        const trimmed = section.trim();
+
+        if (/^#{1,6}\s/.test(trimmed)) {
+          const level = trimmed.match(/^#+/)?.[0].length ?? 1;
+          const headingLevel = Math.min(level, 3);
+          const headingStyle =
+            headingLevel === 1 ? styles.headingLevel1 : headingLevel === 2 ? styles.headingLevel2 : styles.headingLevel3;
+          const heading = trimmed.replace(/^#{1,6}\s*/, '');
+          return (
+            <Text key={`heading-${sectionIndex}`} style={[styles.headingText, headingStyle]} selectable>
+              {heading}
+            </Text>
+          );
+        }
+
+        if (/^\s*[-*]\s+/m.test(trimmed)) {
+          const bulletLines = trimmed.split(/\n/g).filter((line) => /^\s*[-*]\s+/.test(line));
+          return (
+            <View key={`list-${sectionIndex}`} style={styles.bulletList}>
+              {bulletLines.map((line, lineIndex) => {
+                const text = line.replace(/^\s*[-*]\s+/, '');
+                return (
+                  <View key={`list-${sectionIndex}-${lineIndex}`} style={styles.bulletRow}>
+                    <Text style={styles.bulletDot} selectable>
+                      •
+                    </Text>
+                    <Text style={styles.inlineText} selectable>
+                      {renderInlineMarkdown(text, `list-${sectionIndex}-${lineIndex}`)}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          );
+        }
+
+        if (trimmed.includes('\n')) {
+          const lines = trimmed.split('\n');
+          return (
+            <View key={`paragraph-${sectionIndex}`} style={styles.paragraphBlock}>
+              {lines.map((line, lineIndex) => (
+                <Text key={`paragraph-${sectionIndex}-${lineIndex}`} style={styles.inlineText} selectable>
+                  {renderInlineMarkdown(line, `paragraph-${sectionIndex}-${lineIndex}`)}
+                </Text>
+              ))}
+            </View>
+          );
+        }
+
+        return (
+          <Text key={`paragraph-${sectionIndex}`} style={styles.inlineText} selectable>
+            {renderInlineMarkdown(trimmed, `paragraph-${sectionIndex}`)}
+          </Text>
+        );
+      })}
+    </View>
+  );
 };
 
 const normalizeReference = (ref: any, index: number): VeniceReference | null => {
@@ -238,10 +537,23 @@ export default function ChatScreen() {
   const [models, setModels] = useState<VeniceModel[]>([]);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [activeTab, setActiveTab] = useState<'chat' | 'image'>('chat');
+  const [imagePrompt, setImagePrompt] = useState('');
+  const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [hasWarnedNoMistral, setHasWarnedNoMistral] = useState(false);
   const flatListRef = useRef<FlatList<Message>>(null);
+  const previousChatModelRef = useRef<string | null>(null);
   const [attachedImages, setAttachedImages] = useState<{ uri: string; mimeType: string }[]>([]);
-  
+
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [imageOptions, setImageOptions] = useState({
+    steps: DEFAULT_SETTINGS.imageSteps,
+    width: DEFAULT_SETTINGS.imageWidth,
+    height: DEFAULT_SETTINGS.imageHeight,
+    guidance: DEFAULT_SETTINGS.imageGuidanceScale,
+  });
 
   useEffect(() => {
     let isMounted = true;
@@ -258,6 +570,9 @@ export default function ChatScreen() {
     };
   }, []);
 
+  const textModels = useMemo(() => models.filter((model) => !isImageModel(model)), [models]);
+  const imageModels = useMemo(() => models.filter((model) => isImageModel(model)), [models]);
+
   const updateSettings = useCallback((newSettings: Partial<AppSettings>) => {
     setSettings((prev) => {
       const updatedSettings = { ...prev, ...newSettings };
@@ -265,6 +580,63 @@ export default function ChatScreen() {
       return updatedSettings;
     });
   }, []);
+
+  useEffect(() => {
+    if (textModels.length === 0) {
+      return;
+    }
+
+    if (!settings.model || !textModels.some((model) => model.id === settings.model)) {
+      updateSettings({ model: textModels[0].id });
+    }
+  }, [textModels, settings.model, updateSettings]);
+
+  useEffect(() => {
+    if (imageModels.length === 0) {
+      return;
+    }
+
+    if (!settings.imageModel || !imageModels.some((model) => model.id === settings.imageModel)) {
+      updateSettings({ imageModel: imageModels[0].id });
+    }
+  }, [imageModels, settings.imageModel, updateSettings]);
+
+  useEffect(() => {
+    setImageOptions({
+      steps: settings.imageSteps,
+      width: settings.imageWidth,
+      height: settings.imageHeight,
+      guidance: settings.imageGuidanceScale,
+    });
+  }, [settings.imageSteps, settings.imageWidth, settings.imageHeight, settings.imageGuidanceScale]);
+
+  const currentModel = useMemo(
+    () => textModels.find((model) => model.id === settings.model),
+    [textModels, settings.model]
+  );
+
+  const currentImageModel = useMemo(
+    () => imageModels.find((model) => model.id === settings.imageModel),
+    [imageModels, settings.imageModel]
+  );
+
+  const suggestedImageSizes = useMemo(
+    () => buildSuggestedImageSizes(currentImageModel, settings),
+    [currentImageModel, settings]
+  );
+
+  useEffect(() => {
+    if (!currentImageModel) {
+      return;
+    }
+
+    setImageOptions((prev) => ({
+      steps: clampToConstraint(prev.steps ?? settings.imageSteps, currentImageModel, 'steps', settings.imageSteps),
+      width: clampToConstraint(prev.width ?? settings.imageWidth, currentImageModel, 'width', settings.imageWidth),
+      height: clampToConstraint(prev.height ?? settings.imageHeight, currentImageModel, 'height', settings.imageHeight),
+      guidance: clampToConstraint(prev.guidance ?? settings.imageGuidanceScale, currentImageModel, 'guidance_scale', settings.imageGuidanceScale),
+    }));
+  }, [currentImageModel, settings.imageSteps, settings.imageWidth, settings.imageHeight, settings.imageGuidanceScale]);
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -296,7 +668,8 @@ export default function ChatScreen() {
       }
 
       const data = await response.json();
-      setModels(data.data || []);
+      const incomingModels: VeniceModel[] = Array.isArray(data?.data) ? data.data : [];
+      setModels(incomingModels);
     } catch (error) {
       console.error('Failed to load models:', error);
       Alert.alert('Error', 'Failed to load available models');
@@ -309,17 +682,62 @@ export default function ChatScreen() {
     loadModels();
   }, [loadModels]);
 
-  const handleModelSelect = useCallback((modelId: string) => {
-    const selectedModel = models.find((m: VeniceModel) => m.id === modelId);
-    const defaultMaxTokens = getModelDefaultMaxTokens(selectedModel);
-    const updates: Partial<AppSettings> = { model: modelId };
-    if (defaultMaxTokens && defaultMaxTokens > 0) {
-      updates.maxTokens = defaultMaxTokens;
-    }
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      loadModels();
+    }, MODEL_REFRESH_INTERVAL_MS);
 
-    updateSettings(updates);
-    setShowModelPicker(false);
-  }, [models, updateSettings]);
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [loadModels]);
+
+  const handleChatModelSelect = useCallback(
+    (modelId: string) => {
+      const selectedModel = textModels.find((model) => model.id === modelId);
+      const defaultMaxTokens = getModelDefaultMaxTokens(selectedModel);
+      const updates: Partial<AppSettings> = { model: modelId };
+      if (defaultMaxTokens && defaultMaxTokens > 0) {
+        updates.maxTokens = defaultMaxTokens;
+      }
+
+      updateSettings(updates);
+      setShowModelPicker(false);
+    },
+    [textModels, updateSettings]
+  );
+
+  const handleImageModelSelect = useCallback(
+    (modelId: string) => {
+      const selectedModel = imageModels.find((model) => model.id === modelId);
+      if (!selectedModel) {
+        return;
+      }
+
+      const nextSteps = getImageSteps(selectedModel, settings.imageSteps);
+      const nextWidth = getImageDimension(selectedModel, 'width', settings.imageWidth);
+      const nextHeight = getImageDimension(selectedModel, 'height', settings.imageHeight);
+      const nextGuidance = getImageGuidance(selectedModel, settings.imageGuidanceScale);
+
+      updateSettings({
+        imageModel: modelId,
+        imageSteps: nextSteps,
+        imageWidth: nextWidth,
+        imageHeight: nextHeight,
+        imageGuidanceScale: nextGuidance,
+      });
+
+      setImageOptions({
+        steps: nextSteps,
+        width: nextWidth,
+        height: nextHeight,
+        guidance: nextGuidance,
+      });
+
+      setShowModelPicker(false);
+    },
+    [imageModels, settings.imageGuidanceScale, settings.imageHeight, settings.imageSteps, settings.imageWidth, updateSettings]
+  );
 
   const openReferenceLink = useCallback((url?: string) => {
     if (!url) return;
@@ -328,8 +746,141 @@ export default function ChatScreen() {
     });
   }, []);
 
-  const currentModel = useMemo(() => models.find((m: VeniceModel) => m.id === settings.model), [models, settings.model]);
+  const syncImageSettings = useCallback(
+    (next: { steps?: number; width?: number; height?: number; guidance?: number }) => {
+      setImageOptions((prev) => {
+        const merged = { ...prev, ...next };
+        updateSettings({
+          imageSteps: merged.steps,
+          imageWidth: merged.width,
+          imageHeight: merged.height,
+          imageGuidanceScale: merged.guidance,
+        });
+        return merged;
+      });
+    },
+    [updateSettings]
+  );
 
+  const handleGenerateImage = useCallback(async () => {
+    if (!imagePrompt.trim() || isGeneratingImage) {
+      return;
+    }
+
+    if (!currentImageModel) {
+      Alert.alert('No image model', 'Please select an image generation model before creating artwork.');
+      return;
+    }
+
+    const prompt = imagePrompt.trim();
+    setIsGeneratingImage(true);
+    setImageError(null);
+
+    try {
+      const apiKey = "ntmhtbP2fr_pOQsmuLPuN_nm6lm2INWKiNcvrdEfEC";
+      const payload: Record<string, any> = {
+        model: currentImageModel.id,
+        prompt,
+        response_format: 'b64_json',
+      };
+
+      if (currentImageModel && currentImageModel.model_spec?.constraints) {
+        if (currentImageModel.model_spec.constraints.steps != null) {
+          payload.steps = clampToConstraint(imageOptions.steps, currentImageModel, 'steps', settings.imageSteps);
+        }
+        const width = clampToConstraint(imageOptions.width, currentImageModel, 'width', settings.imageWidth);
+        const height = clampToConstraint(imageOptions.height, currentImageModel, 'height', settings.imageHeight);
+        payload.width = width;
+        payload.height = height;
+
+        if (currentImageModel.model_spec.constraints.guidance_scale != null) {
+          payload.guidance_scale = clampToConstraint(
+            imageOptions.guidance,
+            currentImageModel,
+            'guidance_scale',
+            settings.imageGuidanceScale
+          );
+        }
+      }
+
+      const response = await fetch("https://api.venice.ai/api/v1/images/generations", {
+        method: 'POST',
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Venice image API error: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      const firstImage = data?.data?.[0];
+      const base64 = firstImage?.b64_json || firstImage?.b64 || firstImage?.image_base64;
+      const imageUrl = firstImage?.url;
+
+      if (!base64 && !imageUrl) {
+        throw new Error('Image response did not include content.');
+      }
+
+      const imageData = base64 ? `data:image/png;base64,${base64}` : imageUrl;
+      const generated: GeneratedImage = {
+        id: `${Date.now()}`,
+        prompt,
+        modelId: currentImageModel.id,
+        createdAt: Date.now(),
+        imageData,
+        width: payload.width,
+        height: payload.height,
+      };
+
+      setGeneratedImages((prev) => [generated, ...prev]);
+      setImagePrompt('');
+    } catch (error) {
+      console.error('Failed to generate image:', error);
+      setImageError(error instanceof Error ? error.message : 'Failed to generate image.');
+    } finally {
+      setIsGeneratingImage(false);
+    }
+  }, [currentImageModel, imageOptions.guidance, imageOptions.height, imageOptions.steps, imageOptions.width, imagePrompt, isGeneratingImage, settings.imageGuidanceScale, settings.imageHeight, settings.imageSteps, settings.imageWidth]);
+
+  const handleSelectImageSize = useCallback(
+    (width: number, height: number) => {
+      if (!currentImageModel) {
+        return;
+      }
+
+      const nextWidth = clampToConstraint(width, currentImageModel, 'width', settings.imageWidth);
+      const nextHeight = clampToConstraint(height, currentImageModel, 'height', settings.imageHeight);
+      syncImageSettings({ width: nextWidth, height: nextHeight });
+    },
+    [currentImageModel, settings.imageHeight, settings.imageWidth, syncImageSettings]
+  );
+
+  const adjustImageSteps = useCallback(
+    (delta: number) => {
+      if (!currentImageModel) {
+        return;
+      }
+      const next = clampToConstraint(imageOptions.steps + delta, currentImageModel, 'steps', settings.imageSteps);
+      syncImageSettings({ steps: next });
+    },
+    [currentImageModel, imageOptions.steps, settings.imageSteps, syncImageSettings]
+  );
+
+  const adjustImageGuidance = useCallback(
+    (delta: number) => {
+      if (!currentImageModel) {
+        return;
+      }
+      const next = clampToConstraint(imageOptions.guidance + delta, currentImageModel, 'guidance_scale', settings.imageGuidanceScale);
+      syncImageSettings({ guidance: parseFloat(next.toFixed(1)) });
+    },
+    [currentImageModel, imageOptions.guidance, settings.imageGuidanceScale, syncImageSettings]
+  );
   useEffect(() => {
     if (!currentModel) return;
     const defaultMaxTokens = getModelDefaultMaxTokens(currentModel);
@@ -344,6 +895,37 @@ export default function ChatScreen() {
       updateSettings({ maxTokens: defaultMaxTokens });
     }
   }, [currentModel, settings.maxTokens]);
+
+  const mistralModel = useMemo(() => findMistralModel(textModels), [textModels]);
+
+  useEffect(() => {
+    if (attachedImages.length > 0) {
+      if (mistralModel) {
+        if (settings.model !== mistralModel.id) {
+          previousChatModelRef.current = settings.model;
+          updateSettings({ model: mistralModel.id });
+        }
+      } else if (!hasWarnedNoMistral) {
+        setHasWarnedNoMistral(true);
+        Alert.alert(
+          'Vision fallback unavailable',
+          'No Mistral vision-capable model was found. The selected model may fail to use the attached images.'
+        );
+      }
+    } else if (previousChatModelRef.current) {
+      const previousId = previousChatModelRef.current;
+      previousChatModelRef.current = null;
+      if (previousId && textModels.some((model) => model.id === previousId)) {
+        updateSettings({ model: previousId });
+      }
+    }
+  }, [attachedImages.length, hasWarnedNoMistral, mistralModel, settings.model, textModels, updateSettings]);
+
+  useEffect(() => {
+    if (mistralModel) {
+      setHasWarnedNoMistral(false);
+    }
+  }, [mistralModel]);
 
   const pickImageFromLibrary = async () => {
     try {
@@ -468,15 +1050,9 @@ export default function ChatScreen() {
       // Direct Venice AI API call
       const apiKey = "ntmhtbP2fr_pOQsmuLPuN_nm6lm2INWKiNcvrdEfEC";
       
-      const requestBody = {
+      const requestBody: Record<string, any> = {
         model: settings.model,
         messages: conversationHistory,
-        temperature: settings.temperature,
-        top_p: settings.topP,
-        min_p: settings.minP,
-        max_tokens: settings.maxTokens,
-        top_k: settings.topK,
-        repetition_penalty: settings.repetitionPenalty,
         stream: false,
         venice_parameters: {
           character_slug: "venice",
@@ -488,6 +1064,25 @@ export default function ChatScreen() {
           include_venice_system_prompt: true,
         },
       };
+
+      if (shouldIncludeCompletionParameter(currentModel, 'temperature')) {
+        requestBody.temperature = settings.temperature;
+      }
+      if (shouldIncludeCompletionParameter(currentModel, 'top_p')) {
+        requestBody.top_p = settings.topP;
+      }
+      if (shouldIncludeCompletionParameter(currentModel, 'min_p')) {
+        requestBody.min_p = settings.minP;
+      }
+      if (shouldIncludeCompletionParameter(currentModel, 'max_tokens')) {
+        requestBody.max_tokens = settings.maxTokens;
+      }
+      if (shouldIncludeCompletionParameter(currentModel, 'top_k')) {
+        requestBody.top_k = settings.topK;
+      }
+      if (shouldIncludeCompletionParameter(currentModel, 'repetition_penalty')) {
+        requestBody.repetition_penalty = settings.repetitionPenalty;
+      }
 
       // Timeout: extend generously for reasoning models
       const currentModelForTimeout = models.find((m: VeniceModel) => m.id === settings.model);
@@ -541,8 +1136,10 @@ export default function ChatScreen() {
       
       // Find current model for pricing
       const currentModel = models.find((m: VeniceModel) => m.id === settings.model);
-      const inputCost = currentModel ? (inputTokens / 1000000) * currentModel.model_spec.pricing.input.usd : 0;
-      const outputCost = currentModel ? (outputTokens / 1000000) * currentModel.model_spec.pricing.output.usd : 0;
+      const inputUsd = resolveUsdPrice(currentModel?.model_spec?.pricing?.input);
+      const outputUsd = resolveUsdPrice(currentModel?.model_spec?.pricing?.output);
+      const inputCost = inputUsd ? (inputTokens / 1_000_000) * inputUsd : 0;
+      const outputCost = outputUsd ? (outputTokens / 1_000_000) * outputUsd : 0;
       const totalCost = inputCost + outputCost;
       
       const tokensPerSecond = outputTokens > 0 ? (outputTokens / (responseTime / 1000)) : 0;
@@ -647,9 +1244,7 @@ export default function ChatScreen() {
 
         {/* Main Response */}
         <View style={[styles.messageBubble, styles.assistantBubble]}>
-          <Text style={[styles.messageText, styles.assistantText]} selectable>
-            {msg.content}
-          </Text>
+          <RichText content={msg.content} />
 
           {msg.references && msg.references.length > 0 && (
             <View style={styles.referencesContainer}>
@@ -740,52 +1335,68 @@ export default function ChatScreen() {
 
   const renderModelItem = useCallback(
     ({ item }: { item: VeniceModel }) => {
-      const availableContext = item.model_spec.availableContextTokens;
-      const metaParts: string[] = [];
-      if (typeof availableContext === 'number' && availableContext > 0) {
-        metaParts.push(`${Math.round((availableContext / 1000) * 10) / 10}K context`);
-      }
-      const quantization = item.model_spec.capabilities?.quantization;
-      if (quantization) {
-        metaParts.push(quantization);
-      }
-      const metaText = metaParts.length > 0 ? metaParts.join(' • ') : 'Specs unavailable';
-
-      const inputUsd = resolveUsdPrice(item.model_spec.pricing?.input);
-      const outputUsd = resolveUsdPrice(item.model_spec.pricing?.output);
+      const isChatTab = activeTab === 'chat';
+      const isSelected = (isChatTab ? settings.model : settings.imageModel) === item.id;
       const capabilities = item.model_spec.capabilities || {};
+      const metaParts: string[] = [];
+      const onSelect = () => (isChatTab ? handleChatModelSelect(item.id) : handleImageModelSelect(item.id));
+
+      if (isChatTab) {
+        const availableContext = item.model_spec.availableContextTokens;
+        if (typeof availableContext === 'number' && availableContext > 0) {
+          metaParts.push(`${Math.round((availableContext / 1000) * 10) / 10}K context`);
+        }
+        const quantization = capabilities?.quantization;
+        if (quantization) {
+          metaParts.push(quantization);
+        }
+      } else {
+        const width = getConstraintDefaults(item, 'width', settings.imageWidth);
+        const height = getConstraintDefaults(item, 'height', settings.imageHeight);
+        if (width && height) {
+          metaParts.push(`${width}×${height}px`);
+        }
+        const steps = getConstraintDefaults(item, 'steps', settings.imageSteps);
+        if (steps) {
+          metaParts.push(`${steps} steps`);
+        }
+      }
+
+      const metaText = metaParts.length > 0 ? metaParts.join(' • ') : 'Specs unavailable';
+      const primaryPrice = isChatTab
+        ? resolveUsdPrice(item.model_spec.pricing?.input)
+        : resolveUsdPrice(item.model_spec.pricing?.generation ?? item.model_spec.pricing?.output);
+      const secondaryPrice = isChatTab
+        ? resolveUsdPrice(item.model_spec.pricing?.output)
+        : resolveUsdPrice(item.model_spec.pricing?.upscale);
 
       return (
         <TouchableOpacity
-          style={[
-            styles.modelItem,
-            settings.model === item.id && styles.selectedModelItem
-          ]}
-          onPress={() => handleModelSelect(item.id)}
+          style={[styles.modelItem, isSelected && styles.selectedModelItem]}
+          onPress={onSelect}
         >
           <View style={styles.modelInfo}>
             <View style={styles.modelHeader}>
               <Text style={styles.modelName}>{item.model_spec.name}</Text>
-              {item.model_spec.beta && (
-                <Text style={styles.betaTag}>BETA</Text>
-              )}
+              {item.model_spec.beta && <Text style={styles.betaTag}>BETA</Text>}
             </View>
             <Text style={styles.modelId}>{item.id}</Text>
             <Text style={styles.contextTokens}>{metaText}</Text>
             <View style={styles.modelCapabilities}>
-              {capabilities.supportsWebSearch && (
+              {isChatTab && capabilities.supportsWebSearch && (
                 <Text style={styles.capabilityTag}>🌐 Web</Text>
               )}
-              {capabilities.supportsReasoning && (
+              {isChatTab && capabilities.supportsReasoning && (
                 <Text style={styles.capabilityTag}>🧠 Reasoning</Text>
               )}
-              {capabilities.optimizedForCode && (
+              {isChatTab && capabilities.optimizedForCode && (
                 <Text style={styles.capabilityTag}>💻 Code</Text>
               )}
-              {capabilities.supportsVision && (
-                <Text style={styles.capabilityTag}>👁️ Vision</Text>
+              {capabilities.supportsVision && <Text style={styles.capabilityTag}>👁️ Vision</Text>}
+              {!isChatTab && (capabilities.supportsImageGeneration || isImageModel(item)) && (
+                <Text style={styles.capabilityTag}>🎨 Image</Text>
               )}
-              {capabilities.supportsFunctionCalling && (
+              {isChatTab && capabilities.supportsFunctionCalling && (
                 <Text style={styles.capabilityTag}>🔧 Functions</Text>
               )}
             </View>
@@ -793,89 +1404,82 @@ export default function ChatScreen() {
 
           <View style={styles.modelPricing}>
             <Text style={styles.pricingText}>
-              {inputUsd != null ? `$${inputUsd}/1M in` : '—'}
+              {primaryPrice != null ? `$${primaryPrice}${isChatTab ? '/1M in' : ''}` : '—'}
             </Text>
-            <Text style={styles.pricingText}>
-              {outputUsd != null ? `$${outputUsd}/1M out` : '—'}
-            </Text>
+            {isChatTab ? (
+              <Text style={styles.pricingText}>
+                {secondaryPrice != null ? `$${secondaryPrice}/1M out` : '—'}
+              </Text>
+            ) : (
+              <Text style={styles.pricingText}>
+                {secondaryPrice != null ? `Upscale from $${secondaryPrice}` : 'Generation only'}
+              </Text>
+            )}
           </View>
 
-          {settings.model === item.id && (
-            <Ionicons name="checkmark-circle" size={24} color={palette.accentStrong} />
-          )}
+          {isSelected && <Ionicons name="checkmark-circle" size={24} color={palette.accentStrong} />}
         </TouchableOpacity>
       );
     },
-    [handleModelSelect, settings.model]
+    [activeTab, handleChatModelSelect, handleImageModelSelect, settings.imageHeight, settings.imageModel, settings.imageSteps, settings.imageWidth, settings.model]
   );
 
   const TypingIndicator: React.FC = () => {
-    const progressWidth = useRef(new Animated.Value(0)).current;
-    const shimmerPosition = useRef(new Animated.Value(-100)).current;
+    const pulses = useRef([0, 1, 2].map(() => new Animated.Value(0))).current;
 
     useEffect(() => {
-      const createProgressAnimation = () =>
+      const animations = pulses.map((value, index) =>
         Animated.loop(
           Animated.sequence([
-            Animated.timing(progressWidth, {
-              toValue: 100,
-              duration: 2000,
-              useNativeDriver: false,
-              easing: Easing.bezier(0.25, 0.46, 0.45, 0.94),
+            Animated.delay(index * 150),
+            Animated.timing(value, {
+              toValue: 1,
+              duration: 600,
+              easing: Easing.out(Easing.ease),
+              useNativeDriver: true,
             }),
-            Animated.timing(progressWidth, {
+            Animated.timing(value, {
               toValue: 0,
-              duration: 500,
-              useNativeDriver: false,
-              easing: Easing.bezier(0.55, 0.06, 0.68, 0.19),
+              duration: 600,
+              easing: Easing.in(Easing.ease),
+              useNativeDriver: true,
             }),
           ])
-        );
+        )
+      );
 
-      const createShimmerAnimation = () =>
-        Animated.loop(
-          Animated.timing(shimmerPosition, {
-            toValue: 200,
-            duration: 1500,
-            useNativeDriver: true,
-            easing: Easing.linear,
-          })
-        );
-
-      createProgressAnimation().start();
-      createShimmerAnimation().start();
-    }, [progressWidth, shimmerPosition]);
+      animations.forEach((animation) => animation.start());
+      return () => {
+        animations.forEach((animation) => animation.stop());
+      };
+    }, [pulses]);
 
     return (
       <View style={styles.fetchingContainer}>
-        <Text style={styles.fetchingText}>Fetching</Text>
-        <View style={styles.progressBarContainer}>
-          <Animated.View
-            style={[
-              styles.progressBar,
-              {
-                width: progressWidth.interpolate({
-                  inputRange: [0, 100],
-                  outputRange: ['0%', '100%'],
-                }),
-              },
-            ]}
-          />
-          <Animated.View
-            style={[
-              styles.shimmerEffect,
-              {
-                transform: [
-                  {
-                    translateX: shimmerPosition.interpolate({
-                      inputRange: [-100, 200],
-                      outputRange: [-100, 200],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          />
+        <Text style={styles.fetchingText}>Crafting magic…</Text>
+        <View style={styles.typingDots}>
+          {pulses.map((value, index) => (
+            <Animated.View
+              key={index}
+              style={[
+                styles.typingDot,
+                {
+                  transform: [
+                    {
+                      scale: value.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0.8, 1.25],
+                      }),
+                    },
+                  ],
+                  opacity: value.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.4, 1],
+                  }),
+                },
+              ]}
+            />
+          ))}
         </View>
       </View>
     );
@@ -892,138 +1496,285 @@ export default function ChatScreen() {
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        {/* Header */}
         <BlurView intensity={65} tint="dark" style={styles.header}>
-          <View style={styles.headerLeft}>
-            <View style={styles.logoContainer}>
-              <Text style={styles.logoIcon}>✨</Text>
-              <Text style={styles.logoText}>vGPT</Text>
+          <View style={styles.headerContent}>
+            <View style={styles.headerLeft}>
+              <View style={styles.logoContainer}>
+                <Text style={styles.logoIcon}>✨</Text>
+                <Text style={styles.logoText}>vGPT</Text>
+              </View>
             </View>
-          </View>
 
-          <View style={styles.headerRight}>
-            <TouchableOpacity
-              style={styles.modelSelector}
-              onPress={() => setShowModelPicker(true)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.modelText}>
-                {getModelDisplayName(settings.model)}
-              </Text>
-              <Ionicons name="chevron-down" size={16} color={palette.accentStrong} />
-            </TouchableOpacity>
+            <View style={styles.headerRight}>
+              <TouchableOpacity
+                style={styles.modelSelector}
+                onPress={() => setShowModelPicker(true)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.modelText} numberOfLines={1}>
+                  {activeTab === 'chat'
+                    ? getModelDisplayName(settings.model)
+                    : getModelDisplayName(settings.imageModel)}
+                </Text>
+                <Ionicons name="chevron-down" size={16} color={palette.accentStrong} />
+              </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.settingsButton}
-              onPress={() => router.push('/settings')}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="settings" size={20} color={palette.accentStrong} />
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.settingsButton}
+                onPress={() => router.push('/settings')}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="settings" size={20} color={palette.accentStrong} />
+              </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.newChatButton}
-              onPress={handleNewChat}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="add" size={24} color={palette.accentStrong} />
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.newChatButton}
+                onPress={activeTab === 'chat' ? handleNewChat : () => setGeneratedImages([])}
+                activeOpacity={0.8}
+              >
+                <Ionicons name={activeTab === 'chat' ? 'add' : 'refresh'} size={24} color={palette.accentStrong} />
+              </TouchableOpacity>
+            </View>
           </View>
         </BlurView>
 
-        {/* Messages */}
-        <FlatList
-          ref={flatListRef}
-          data={messages}
-          style={styles.messagesContainer}
-          keyExtractor={keyExtractor}
-          renderItem={({ item }: { item: Message }) => <MessageItem item={item} />}
-          contentContainerStyle={messages.length === 0 ? styles.emptyState : styles.messagesContent}
-          ListEmptyComponent={
-            <View style={styles.welcomeContainer}>
-              <View style={styles.welcomeIconContainer}>
-                <Text style={styles.welcomeIcon}>✨</Text>
-                <Text style={styles.sparkleIcon}>✨</Text>
-              </View>
-              <Text style={styles.welcomeTitle}>Ready to chat!</Text>
-              <Text style={styles.welcomeSubtitle}>
-                Send a message to start the conversation with {getModelDisplayName(settings.model)}
-              </Text>
-            </View>
-          }
-          ListFooterComponent={
-            isLoading ? (
-              <View style={styles.loadingMessage}>
-                <View style={[styles.assistantBubble, { alignSelf: 'flex-start' }]}>
-                  <TypingIndicator />
-                </View>
-              </View>
-            ) : null
-          }
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          removeClippedSubviews={Platform.OS !== 'web'}
-          initialNumToRender={12}
-          maxToRenderPerBatch={12}
-          windowSize={5}
-          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-        />
+        <View style={styles.tabSwitcherRow}>
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === 'chat' && styles.tabButtonActive]}
+            onPress={() => setActiveTab('chat')}
+            activeOpacity={0.9}
+          >
+            <Text style={[styles.tabButtonText, activeTab === 'chat' && styles.tabButtonTextActive]}>Chat</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === 'image' && styles.tabButtonActive]}
+            onPress={() => setActiveTab('image')}
+            activeOpacity={0.9}
+          >
+            <Text style={[styles.tabButtonText, activeTab === 'image' && styles.tabButtonTextActive]}>Images</Text>
+          </TouchableOpacity>
+        </View>
 
-        {/* Input */}
-        <BlurView intensity={30} tint="light" style={styles.inputContainer}>
-          {attachedImages.length > 0 && (
-            <ScrollView
-              horizontal
-              style={styles.attachmentsBar}
-              contentContainerStyle={styles.attachmentsContent}
-              showsHorizontalScrollIndicator={false}
-            >
-              {attachedImages.map((img: { uri: string; mimeType: string }) => (
-                <View key={img.uri} style={styles.attachmentItem}>
-                  <ImagePreview uri={img.uri} />
-                  <TouchableOpacity style={styles.removeAttachmentBtn} onPress={() => removeAttachedImage(img.uri)}>
-                    <Ionicons name="close" size={14} color="#fff" />
+        {activeTab === 'chat' ? (
+          <>
+            <FlatList
+              ref={flatListRef}
+              data={messages}
+              style={styles.messagesContainer}
+              keyExtractor={keyExtractor}
+              renderItem={({ item }: { item: Message }) => <MessageItem item={item} />}
+              contentContainerStyle={messages.length === 0 ? styles.emptyState : styles.messagesContent}
+              ListEmptyComponent={
+                <View style={styles.welcomeContainer}>
+                  <View style={styles.welcomeIconContainer}>
+                    <Text style={styles.welcomeIcon}>✨</Text>
+                    <Text style={styles.sparkleIcon}>✨</Text>
+                  </View>
+                  <Text style={styles.welcomeTitle}>Ready to chat!</Text>
+                  <Text style={styles.welcomeSubtitle}>
+                    Send a message to start the conversation with {getModelDisplayName(settings.model)}
+                  </Text>
+                </View>
+              }
+              ListFooterComponent={
+                isLoading ? (
+                  <View style={styles.loadingMessage}>
+                    <View style={[styles.assistantBubble, { alignSelf: 'flex-start' }]}>
+                      <TypingIndicator />
+                    </View>
+                  </View>
+                ) : null
+              }
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              removeClippedSubviews={Platform.OS !== 'web'}
+              initialNumToRender={12}
+              maxToRenderPerBatch={12}
+              windowSize={5}
+              maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+              onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+            />
+
+            <View style={styles.composerContainer}>
+              {attachedImages.length > 0 && (
+                <ScrollView
+                  horizontal
+                  style={styles.attachmentsBar}
+                  contentContainerStyle={styles.attachmentsContent}
+                  showsHorizontalScrollIndicator={false}
+                >
+                  {attachedImages.map((img: { uri: string; mimeType: string }) => (
+                    <View key={img.uri} style={styles.attachmentItem}>
+                      <ImagePreview uri={img.uri} />
+                      <TouchableOpacity style={styles.removeAttachmentBtn} onPress={() => removeAttachedImage(img.uri)}>
+                        <Ionicons name="close" size={14} color="#fff" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+              <View style={styles.composerShell}>
+                <View style={styles.composerInner}>
+                  <View style={styles.avatarBubble}>
+                    <Text style={styles.avatarGlyph}>🪄</Text>
+                  </View>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Message the AI..."
+                    placeholderTextColor={palette.textMuted}
+                    value={message}
+                    onChangeText={setMessage}
+                    multiline
+                    maxLength={4000}
+                    editable={!isLoading}
+                    autoCorrect
+                    autoCapitalize="sentences"
+                  />
+                </View>
+                <View style={styles.composerActions}>
+                  <TouchableOpacity onPress={pickImageFromLibrary} style={styles.iconButton} activeOpacity={0.8}>
+                    <Ionicons name="image-outline" size={20} color={palette.textSecondary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={takePhotoWithCamera} style={styles.iconButton} activeOpacity={0.8}>
+                    <Ionicons name="camera-outline" size={20} color={palette.textSecondary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.sendButton, (!message.trim() || isLoading) && styles.sendButtonDisabled]}
+                    onPress={handleSend}
+                    disabled={!message.trim() || isLoading}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="arrow-up" size={20} color="white" />
                   </TouchableOpacity>
                 </View>
-              ))}
+              </View>
+            </View>
+          </>
+        ) : (
+          <View style={styles.imageTabContainer}>
+            <ScrollView
+              style={styles.imageScroll}
+              contentContainerStyle={generatedImages.length === 0 ? styles.imageEmptyState : styles.imageResults}
+              showsVerticalScrollIndicator={false}
+            >
+              {imageError && (
+                <View style={styles.errorBanner}>
+                  <Text style={styles.errorText}>{imageError}</Text>
+                </View>
+              )}
+
+              {generatedImages.length === 0 ? (
+                <View style={styles.imageWelcome}>
+                  <Ionicons name="image-outline" size={32} color={palette.textSecondary} />
+                  <Text style={styles.imageWelcomeTitle}>Create your first masterpiece</Text>
+                  <Text style={styles.imageWelcomeSubtitle}>
+                    Describe an idea and let {getModelDisplayName(settings.imageModel)} bring it to life.
+                  </Text>
+                </View>
+              ) : (
+                generatedImages.map((item) => (
+                  <View key={item.id} style={styles.generatedCard}>
+                    <Image source={{ uri: item.imageData }} style={styles.generatedImage} contentFit="cover" />
+                    <View style={styles.generatedMeta}>
+                      <Text style={styles.generatedPrompt} numberOfLines={2} selectable>
+                        {item.prompt}
+                      </Text>
+                      <Text style={styles.generatedDetails} selectable>
+                        {getModelDisplayName(item.modelId)} • {new Date(item.createdAt).toLocaleTimeString()}
+                      </Text>
+                    </View>
+                  </View>
+                ))
+              )}
             </ScrollView>
-          )}
-          <View style={styles.inputWrapper}>
-            <View style={styles.leftActions}>
-              <TouchableOpacity onPress={pickImageFromLibrary} style={styles.iconButton} activeOpacity={0.8}>
-                <Ionicons name="image-outline" size={20} color={palette.textSecondary} />
+
+            <View style={styles.imageComposer}>
+              <TouchableOpacity
+                style={styles.imageModelSelector}
+                onPress={() => setShowModelPicker(true)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.imageModelLabel} numberOfLines={1}>
+                  {getModelDisplayName(settings.imageModel)}
+                </Text>
+                <Ionicons name="chevron-down" size={16} color={palette.accentStrong} />
               </TouchableOpacity>
-              <TouchableOpacity onPress={takePhotoWithCamera} style={styles.iconButton} activeOpacity={0.8}>
-                <Ionicons name="camera-outline" size={20} color={palette.textSecondary} />
+
+              <View style={styles.sizeChipsRow}>
+                {suggestedImageSizes.map((size) => {
+                  const isActive = imageOptions.width === size.width && imageOptions.height === size.height;
+                  return (
+                    <TouchableOpacity
+                      key={`${size.width}x${size.height}`}
+                      style={[styles.sizeChip, isActive && styles.sizeChipActive]}
+                      onPress={() => handleSelectImageSize(size.width, size.height)}
+                    >
+                      <Text style={[styles.sizeChipText, isActive && styles.sizeChipTextActive]}>
+                        {size.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <View style={styles.imageControlsRow}>
+                <View style={styles.controlGroup}>
+                  <Text style={styles.controlLabel}>Steps</Text>
+                  <View style={styles.controlButtons}>
+                    <TouchableOpacity style={styles.controlButton} onPress={() => adjustImageSteps(-1)}>
+                      <Ionicons name="remove" size={18} color={palette.textPrimary} />
+                    </TouchableOpacity>
+                    <Text style={styles.controlValue}>{imageOptions.steps}</Text>
+                    <TouchableOpacity style={styles.controlButton} onPress={() => adjustImageSteps(1)}>
+                      <Ionicons name="add" size={18} color={palette.textPrimary} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                <View style={styles.controlGroup}>
+                  <Text style={styles.controlLabel}>Guidance</Text>
+                  <View style={styles.controlButtons}>
+                    <TouchableOpacity style={styles.controlButton} onPress={() => adjustImageGuidance(-0.5)}>
+                      <Ionicons name="remove" size={18} color={palette.textPrimary} />
+                    </TouchableOpacity>
+                    <Text style={styles.controlValue}>{imageOptions.guidance.toFixed(1)}</Text>
+                    <TouchableOpacity style={styles.controlButton} onPress={() => adjustImageGuidance(0.5)}>
+                      <Ionicons name="add" size={18} color={palette.textPrimary} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+
+              <View style={styles.imagePromptField}>
+                <TextInput
+                  style={styles.imagePromptInput}
+                  placeholder="Describe what you want to see..."
+                  placeholderTextColor={palette.textMuted}
+                  value={imagePrompt}
+                  onChangeText={setImagePrompt}
+                  multiline
+                  numberOfLines={3}
+                  maxLength={1000}
+                />
+              </View>
+
+              <TouchableOpacity
+                style={[styles.generateButton, (isGeneratingImage || !imagePrompt.trim()) && styles.generateButtonDisabled]}
+                onPress={handleGenerateImage}
+                disabled={isGeneratingImage || !imagePrompt.trim()}
+                activeOpacity={0.85}
+              >
+                {isGeneratingImage ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.generateButtonText}>Generate</Text>
+                )}
               </TouchableOpacity>
             </View>
-            <TextInput
-              style={styles.textInput}
-              placeholder="Message..."
-              placeholderTextColor={palette.textMuted}
-              value={message}
-              onChangeText={setMessage}
-              multiline
-              maxLength={4000}
-              editable={!isLoading}
-              autoCorrect
-              autoCapitalize="sentences"
-            />
-            <TouchableOpacity
-              style={[
-                styles.sendButton,
-                (!message.trim() || isLoading) && styles.sendButtonDisabled
-              ]}
-              onPress={handleSend}
-              disabled={!message.trim() || isLoading}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="arrow-up" size={20} color="white" />
-            </TouchableOpacity>
           </View>
-        </BlurView>
+        )}
       </KeyboardAvoidingView>
+
 
       {/* Model Picker Modal */}
       <Modal
@@ -1036,7 +1787,9 @@ export default function ChatScreen() {
             <TouchableOpacity onPress={() => setShowModelPicker(false)}>
               <Text style={styles.modalCancelText}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Select Model</Text>
+            <Text style={styles.modalTitle}>
+              {activeTab === 'chat' ? 'Select Chat Model' : 'Select Image Model'}
+            </Text>
             <View style={styles.headerSpacer} />
           </View>
           
@@ -1046,13 +1799,17 @@ export default function ChatScreen() {
             </View>
           ) : (
             <FlatList
-              data={models}
+              data={activeTab === 'chat' ? textModels : imageModels}
               renderItem={renderModelItem}
               keyExtractor={(item: VeniceModel) => item.id}
               contentContainerStyle={styles.modelList}
               ListEmptyComponent={(
                 <View style={styles.loadingContainer}>
-                  <Text style={styles.emptyModelsText}>No models available.</Text>
+                  <Text style={styles.emptyModelsText}>
+                    {activeTab === 'chat'
+                      ? 'No chat models available.'
+                      : 'No image models available.'}
+                  </Text>
                 </View>
               )}
             />
@@ -1086,15 +1843,17 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     paddingHorizontal: space.xl,
     paddingVertical: space.lg,
     backgroundColor: palette.surface,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: palette.divider,
     ...shadow.subtle,
+  },
+  headerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   headerLeft: {
     flexDirection: 'row',
@@ -1104,6 +1863,40 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.sm,
+  },
+  tabSwitcherRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    paddingBottom: space.sm,
+    backgroundColor: palette.surface,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: palette.divider,
+  },
+  tabButton: {
+    flex: 1,
+    paddingVertical: space.sm,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surfaceElevated,
+  },
+  tabButtonActive: {
+    backgroundColor: palette.accentSoft,
+    borderColor: palette.accent,
+  },
+  tabButtonText: {
+    textAlign: 'center',
+    fontSize: 14,
+    fontFamily: fonts.medium,
+    color: palette.textSecondary,
+    letterSpacing: 0.4,
+  },
+  tabButtonTextActive: {
+    color: palette.accentStrong,
   },
   logoContainer: {
     flexDirection: 'row',
@@ -1248,6 +2041,74 @@ const styles = StyleSheet.create({
   assistantText: {
     color: palette.textPrimary,
   },
+  richTextContainer: {
+    gap: space.sm,
+  },
+  paragraphBlock: {
+    gap: space.xs,
+  },
+  inlineText: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: palette.textPrimary,
+    fontFamily: fonts.regular,
+  },
+  inlineBold: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: palette.textPrimary,
+    fontFamily: fonts.semibold,
+  },
+  inlineItalic: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: palette.textPrimary,
+    fontStyle: 'italic',
+    fontFamily: fonts.regular,
+  },
+  inlineCode: {
+    fontSize: 15,
+    lineHeight: 24,
+    color: palette.accentStrong,
+    fontFamily: fonts.mono,
+    backgroundColor: palette.surfaceActive,
+    paddingHorizontal: space.xs,
+    paddingVertical: 2,
+    borderRadius: radii.sm,
+  },
+  inlineLink: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: palette.accentStrong,
+    textDecorationLine: 'underline',
+    fontFamily: fonts.medium,
+  },
+  headingText: {
+    fontSize: 18,
+    color: palette.textPrimary,
+    fontFamily: fonts.semibold,
+  },
+  headingLevel1: {
+    fontSize: 22,
+  },
+  headingLevel2: {
+    fontSize: 20,
+  },
+  headingLevel3: {
+    fontSize: 18,
+  },
+  bulletList: {
+    gap: space.xs,
+  },
+  bulletRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.sm,
+  },
+  bulletDot: {
+    fontSize: 16,
+    color: palette.accentStrong,
+  },
   referencesContainer: {
     marginTop: space.md,
     paddingTop: space.md,
@@ -1287,6 +2148,7 @@ const styles = StyleSheet.create({
   },
   fetchingContainer: {
     alignItems: 'center',
+    gap: space.xs,
     paddingVertical: space.sm,
     paddingHorizontal: space.lg,
   },
@@ -1294,28 +2156,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: palette.textSecondary,
     fontFamily: fonts.medium,
-    marginBottom: space.sm,
     letterSpacing: 0.3,
   },
-  progressBarContainer: {
-    width: 140,
-    height: 4,
-    backgroundColor: palette.borderMuted,
-    borderRadius: radii.sm,
-    overflow: 'hidden',
-    position: 'relative',
+  typingDots: {
+    flexDirection: 'row',
+    gap: space.sm,
   },
-  progressBar: {
-    height: '100%',
+  typingDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: palette.accent,
-  },
-  shimmerEffect: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    bottom: 0,
-    width: 60,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
   },
   attachmentsBar: {
     maxHeight: 80,
@@ -1352,11 +2203,49 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(12, 12, 12, 0.65)',
   },
-  leftActions: {
+  composerContainer: {
+    backgroundColor: palette.surface,
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    paddingBottom: space.xl,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: palette.divider,
+    gap: space.md,
+  },
+  composerShell: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: palette.inputBackground,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: palette.inputBorder,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    gap: space.md,
+  },
+  composerInner: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+  },
+  avatarBubble: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: palette.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarGlyph: {
+    fontSize: 18,
+    color: palette.accentStrong,
+  },
+  composerActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.sm,
-    marginRight: space.md,
   },
   iconButton: {
     width: 40,
@@ -1378,30 +2267,13 @@ const styles = StyleSheet.create({
     height: 150,
     borderRadius: radii.md,
   },
-  inputContainer: {
-    backgroundColor: palette.surface,
-    paddingHorizontal: space.lg,
-    paddingTop: space.md,
-    paddingBottom: space.xl,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: palette.divider,
-  },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    backgroundColor: palette.inputBackground,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: palette.inputBorder,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-  },
   textInput: {
     flex: 1,
     fontSize: 16,
     color: palette.textPrimary,
     maxHeight: 140,
     paddingVertical: space.xs,
+    paddingRight: space.sm,
     textAlignVertical: 'top',
     fontFamily: fonts.regular,
   },
@@ -1422,6 +2294,203 @@ const styles = StyleSheet.create({
   sendButtonDisabled: {
     backgroundColor: palette.borderMuted,
     shadowOpacity: 0,
+  },
+  imageTabContainer: {
+    flex: 1,
+    backgroundColor: palette.surface,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: palette.divider,
+  },
+  imageScroll: {
+    flex: 1,
+  },
+  imageEmptyState: {
+    flexGrow: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: space.xl,
+    gap: space.md,
+  },
+  imageResults: {
+    padding: space.lg,
+    gap: space.lg,
+  },
+  errorBanner: {
+    borderRadius: radii.lg,
+    backgroundColor: palette.danger,
+    padding: space.md,
+  },
+  errorText: {
+    color: palette.textPrimary,
+    fontFamily: fonts.medium,
+  },
+  imageWelcome: {
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  imageWelcomeTitle: {
+    fontSize: 20,
+    color: palette.textPrimary,
+    fontFamily: fonts.semibold,
+  },
+  imageWelcomeSubtitle: {
+    fontSize: 14,
+    color: palette.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+    paddingHorizontal: space.xl,
+  },
+  imageComposer: {
+    gap: space.md,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.lg,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: palette.divider,
+    backgroundColor: palette.surface,
+  },
+  imageModelSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: palette.inputBackground,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: palette.inputBorder,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
+  },
+  imageModelLabel: {
+    fontSize: 14,
+    color: palette.textPrimary,
+    fontFamily: fonts.medium,
+  },
+  sizeChipsRow: {
+    flexDirection: 'row',
+    gap: space.sm,
+    flexWrap: 'wrap',
+  },
+  sizeChip: {
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surfaceElevated,
+  },
+  sizeChipActive: {
+    borderColor: palette.accent,
+    backgroundColor: palette.accentSoft,
+  },
+  sizeChipText: {
+    fontSize: 12,
+    color: palette.textSecondary,
+    fontFamily: fonts.medium,
+  },
+  sizeChipTextActive: {
+    color: palette.accentStrong,
+  },
+  imageControlsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: space.md,
+  },
+  controlGroup: {
+    flex: 1,
+    backgroundColor: palette.surfaceElevated,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: palette.border,
+    padding: space.md,
+    gap: space.sm,
+  },
+  controlLabel: {
+    fontSize: 12,
+    color: palette.textSecondary,
+    fontFamily: fonts.medium,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  controlButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: space.sm,
+  },
+  controlButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.surfaceActive,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  controlValue: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 14,
+    color: palette.textPrimary,
+    fontFamily: fonts.semibold,
+  },
+  imagePromptField: {
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: palette.inputBorder,
+    backgroundColor: palette.inputBackground,
+    padding: space.md,
+  },
+  imagePromptInput: {
+    minHeight: 70,
+    fontSize: 16,
+    color: palette.textPrimary,
+    textAlignVertical: 'top',
+    fontFamily: fonts.regular,
+  },
+  generateButton: {
+    height: 52,
+    borderRadius: radii.pill,
+    backgroundColor: palette.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadow.elevated,
+  },
+  generateButtonDisabled: {
+    backgroundColor: palette.borderMuted,
+    shadowOpacity: 0,
+  },
+  generateButtonText: {
+    fontSize: 16,
+    color: palette.textPrimary,
+    fontFamily: fonts.semibold,
+    letterSpacing: 0.4,
+  },
+  generatedCard: {
+    borderRadius: radii.lg,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surfaceElevated,
+    ...shadow.subtle,
+  },
+  generatedImage: {
+    width: '100%',
+    aspectRatio: 1,
+    backgroundColor: palette.surface,
+  },
+  generatedMeta: {
+    padding: space.md,
+    gap: space.xs,
+  },
+  generatedPrompt: {
+    fontSize: 14,
+    color: palette.textPrimary,
+    fontFamily: fonts.medium,
+  },
+  generatedDetails: {
+    fontSize: 12,
+    color: palette.textMuted,
+    fontFamily: fonts.regular,
   },
   modalContainer: {
     flex: 1,
