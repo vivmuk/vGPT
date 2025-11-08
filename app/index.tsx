@@ -31,6 +31,12 @@ import { AppSettings } from '@/types/settings';
 import { VeniceModel } from '@/types/venice';
 import { loadStoredSettings, persistSettings } from '@/utils/settingsStorage';
 import { theme } from '@/constants/theme';
+import {
+  VENICE_API_KEY,
+  VENICE_CHAT_COMPLETIONS_ENDPOINT,
+  VENICE_IMAGE_GENERATIONS_ENDPOINT,
+  VENICE_MODELS_ENDPOINT,
+} from '@/constants/venice';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -102,11 +108,19 @@ const getModelDefaultMaxTokens = (model?: VeniceModel | null): number | undefine
 
 const isImageModel = (model?: VeniceModel | null): boolean => {
   if (!model) return false;
-  if (typeof model.type === 'string' && model.type.toLowerCase() === 'image') {
+
+  const modelType = model.type?.toLowerCase?.() ?? '';
+  if (modelType.includes('image') || modelType.includes('vision') || modelType.includes('diffusion')) {
     return true;
   }
 
-  if (model.model_spec?.capabilities?.supportsImageGeneration) {
+  const capabilities = model.model_spec?.capabilities || {};
+  if (capabilities.supportsImageGeneration || capabilities.image || capabilities.supportsImage || capabilities.vision) {
+    return true;
+  }
+
+  const capabilityKeys = Object.keys(capabilities);
+  if (capabilityKeys.some((key) => key.toLowerCase().includes('image'))) {
     return true;
   }
 
@@ -116,8 +130,17 @@ const isImageModel = (model?: VeniceModel | null): boolean => {
     }
   }
 
+  if (model.model_spec?.pricing?.generation) {
+    return true;
+  }
+
   const source = model.model_spec?.modelSource?.toLowerCase() ?? '';
-  return source.includes('stable-diffusion') || source.includes('image');
+  if (source.includes('stable-diffusion') || source.includes('image') || source.includes('flux')) {
+    return true;
+  }
+
+  const modelId = model.id.toLowerCase();
+  return modelId.includes('image') || modelId.includes('vision') || modelId.includes('flux');
 };
 
 const mistralMatcher = /mistral/i;
@@ -512,6 +535,25 @@ const sanitizeContentWithReferences = (content: string, references: VeniceRefere
   return sanitized.trim();
 };
 
+const splitThinkingFromContent = (fullText: string): { thinking: string; content: string } => {
+  if (!fullText) {
+    return { thinking: '', content: '' };
+  }
+
+  let thinking = '';
+  let content = fullText;
+
+  if (fullText.includes('<think>') && fullText.includes('</think>')) {
+    const thinkMatch = fullText.match(/<think>([\s\S]*?)<\/think>/);
+    if (thinkMatch) {
+      thinking = thinkMatch[1].trim();
+      content = fullText.replace(/<think>[\s\S]*?<\/think>/, '').trim();
+    }
+  }
+
+  return { thinking, content };
+};
+
 const resolveUsdPrice = (pricingSection: unknown): number | undefined => {
   if (pricingSection == null) {
     return undefined;
@@ -546,6 +588,7 @@ export default function ChatScreen() {
   const flatListRef = useRef<FlatList<Message>>(null);
   const previousChatModelRef = useRef<string | null>(null);
   const [attachedImages, setAttachedImages] = useState<{ uri: string; mimeType: string }[]>([]);
+  const activeRequestControllerRef = useRef<AbortController | null>(null);
 
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [imageOptions, setImageOptions] = useState({
@@ -554,6 +597,7 @@ export default function ChatScreen() {
     height: DEFAULT_SETTINGS.imageHeight,
     guidance: DEFAULT_SETTINGS.imageGuidanceScale,
   });
+  const [showAdvancedImageOptions, setShowAdvancedImageOptions] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -567,6 +611,12 @@ export default function ChatScreen() {
 
     return () => {
       isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      activeRequestControllerRef.current?.abort();
     };
   }, []);
 
@@ -654,21 +704,25 @@ export default function ChatScreen() {
   const loadModels = useCallback(async () => {
     setIsLoadingModels(true);
     try {
-      const apiKey = "ntmhtbP2fr_pOQsmuLPuN_nm6lm2INWKiNcvrdEfEC";
-
-      const response = await fetch("https://api.venice.ai/api/v1/models", {
-        method: "GET",
+      const response = await fetch(VENICE_MODELS_ENDPOINT, {
+        method: 'GET',
         headers: {
-          "Authorization": `Bearer ${apiKey}`,
+          Authorization: `Bearer ${VENICE_API_KEY}`,
         },
       });
 
       if (!response.ok) {
-        throw new Error(`Venice API error: ${response.status}`);
+        const errorText = await response.text();
+        throw new Error(`Venice API error: ${response.status} - ${errorText}`);
       }
 
       const data = await response.json();
-      const incomingModels: VeniceModel[] = Array.isArray(data?.data) ? data.data : [];
+      const incomingModels: VeniceModel[] = Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data?.models)
+        ? data.models
+        : [];
+
       setModels(incomingModels);
     } catch (error) {
       console.error('Failed to load models:', error);
@@ -777,7 +831,6 @@ export default function ChatScreen() {
     setImageError(null);
 
     try {
-      const apiKey = "ntmhtbP2fr_pOQsmuLPuN_nm6lm2INWKiNcvrdEfEC";
       const payload: Record<string, any> = {
         model: currentImageModel.id,
         prompt,
@@ -803,10 +856,10 @@ export default function ChatScreen() {
         }
       }
 
-      const response = await fetch("https://api.venice.ai/api/v1/images/generations", {
+      const response = await fetch(VENICE_IMAGE_GENERATIONS_ENDPOINT, {
         method: 'POST',
         headers: {
-          "Authorization": `Bearer ${apiKey}`,
+          Authorization: `Bearer ${VENICE_API_KEY}`,
           "Content-Type": 'application/json',
         },
         body: JSON.stringify(payload),
@@ -987,76 +1040,81 @@ export default function ChatScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
 
-    const userMessage = message.trim();
-    const newUserMessage: Message = {
-      role: 'user',
-      content: userMessage,
-      id: Date.now().toString(),
-      images: attachedImages.length ? attachedImages : undefined,
-    };
-
-    setMessages((prev: Message[]) => [...prev, newUserMessage]);
+    const userMessageText = message.trim();
     setMessage('');
     setIsLoading(true);
 
-    try {
-      // Track timing
-      const startTime = Date.now();
-      
-      // Prepare conversation history
-      const conversationHistory: any[] = [
-        ...messages.map((msg: Message) => {
-          if (msg.role === 'user' && msg.images && msg.images.length > 0) {
-            // Represent prior user messages with images as multimodal parts
-            return {
-              role: 'user',
-              content: [
-                { type: 'text', text: msg.content },
-                ...msg.images.map(img => ({ type: 'image_url', image_url: img.dataUrl || img.uri }))
-              ]
-            };
-          }
-          return { role: msg.role, content: msg.content };
-        }),
-      ];
+    const attachmentsSnapshot = [...attachedImages];
 
-      // Attach current images if any
-      let currentUserContent: any = userMessage;
-      if (attachedImages.length > 0) {
-        // Warn if model may not support vision
-        const currentModelVision = models.find((m: VeniceModel) => m.id === settings.model)?.model_spec.capabilities.supportsVision;
-        if (!currentModelVision) {
-          Alert.alert('Model limitation', 'The selected model may not support images. The request will still be sent, but it may be ignored by the model.');
-        }
-        // Convert images to data URLs
-        const imagesWithDataUrls: { uri: string; mimeType: string; dataUrl: string }[] = [];
-        for (const img of attachedImages) {
-          try {
-            const base64 = await FileSystem.readAsStringAsync(img.uri, { encoding: FileSystem.EncodingType.Base64 });
-            imagesWithDataUrls.push({ uri: img.uri, mimeType: img.mimeType, dataUrl: `data:${img.mimeType};base64,${base64}` });
-          } catch (e) {
-            imagesWithDataUrls.push({ uri: img.uri, mimeType: img.mimeType, dataUrl: img.uri });
-          }
-        }
-        currentUserContent = [
-          { type: 'text', text: userMessage },
-          ...imagesWithDataUrls.map(img => ({ type: 'image_url', image_url: { url: img.dataUrl } }))
-        ];
-        conversationHistory.push({ role: 'user' as const, content: currentUserContent });
-      } else {
-        conversationHistory.push({ role: 'user' as const, content: userMessage });
+    if (attachmentsSnapshot.length > 0) {
+      const currentModelVision = models.find((m: VeniceModel) => m.id === settings.model)?.model_spec.capabilities.supportsVision;
+      if (!currentModelVision) {
+        Alert.alert(
+          'Model limitation',
+          'The selected model may not support images. The request will still be sent, but it may be ignored by the model.'
+        );
       }
+    }
 
-      // Direct Venice AI API call
-      const apiKey = "ntmhtbP2fr_pOQsmuLPuN_nm6lm2INWKiNcvrdEfEC";
-      
+    const imagesWithDataUrls: { uri: string; mimeType: string; dataUrl: string }[] = [];
+
+    for (const img of attachmentsSnapshot) {
+      try {
+        const base64 = await FileSystem.readAsStringAsync(img.uri, { encoding: FileSystem.EncodingType.Base64 });
+        imagesWithDataUrls.push({
+          uri: img.uri,
+          mimeType: img.mimeType,
+          dataUrl: `data:${img.mimeType};base64,${base64}`,
+        });
+      } catch {
+        imagesWithDataUrls.push({
+          uri: img.uri,
+          mimeType: img.mimeType,
+          dataUrl: img.uri,
+        });
+      }
+    }
+
+    const newUserMessage: Message = {
+      role: 'user',
+      content: userMessageText,
+      id: Date.now().toString(),
+      images: imagesWithDataUrls.length ? imagesWithDataUrls : undefined,
+    };
+
+    const conversationMessages = [...messages, newUserMessage];
+
+    setMessages((prev: Message[]) => [...prev, newUserMessage]);
+
+    let assistantMessageId: string | null = null;
+    const startTime = Date.now();
+
+    try {
+      const currentModel = models.find((m: VeniceModel) => m.id === settings.model);
+
+      const conversationHistory: any[] = conversationMessages.map((msg: Message) => {
+        if (msg.role === 'user' && msg.images && msg.images.length > 0) {
+          return {
+            role: 'user',
+            content: [
+              { type: 'text', text: msg.content },
+              ...msg.images.map((img) => ({
+                type: 'image_url',
+                image_url: { url: img.dataUrl ?? img.uri },
+              })),
+            ],
+          };
+        }
+        return { role: msg.role, content: msg.content };
+      });
+
       const requestBody: Record<string, any> = {
         model: settings.model,
         messages: conversationHistory,
-        stream: false,
+        stream: true,
         venice_parameters: {
-          character_slug: "venice",
-          strip_thinking_response: false, // Always get thinking for separation
+          character_slug: 'venice',
+          strip_thinking_response: false,
           disable_thinking: settings.disableThinking,
           enable_web_search: settings.webSearch,
           enable_web_citations: settings.webCitations,
@@ -1084,72 +1142,184 @@ export default function ChatScreen() {
         requestBody.repetition_penalty = settings.repetitionPenalty;
       }
 
-      // Timeout: extend generously for reasoning models
-      const currentModelForTimeout = models.find((m: VeniceModel) => m.id === settings.model);
-      const supportsReasoning = currentModelForTimeout?.model_spec.capabilities.supportsReasoning;
-      const requestTimeoutMs = supportsReasoning ? 10 * 60 * 1000 : 2 * 60 * 1000; // 10 min for reasoning, 2 min otherwise
+      const supportsReasoning = currentModel?.model_spec.capabilities.supportsReasoning;
+      const requestTimeoutMs = supportsReasoning ? 10 * 60 * 1000 : 2 * 60 * 1000;
+
       const controller = new AbortController();
+      activeRequestControllerRef.current?.abort();
+      activeRequestControllerRef.current = controller;
       const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
 
-      const response = await fetch("https://api.venice.ai/api/v1/chat/completions", {
-        method: "POST",
+      const response = await fetch(VENICE_CHAT_COMPLETIONS_ENDPOINT, {
+        method: 'POST',
         headers: {
-          "Authorization": `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
+          Authorization: `Bearer ${VENICE_API_KEY}`,
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify(requestBody),
         signal: controller.signal as any,
       });
+
       clearTimeout(timeoutId);
+      activeRequestControllerRef.current = null;
 
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`Venice API error: ${response.status} - ${errorText}`);
       }
 
-      const data = await response.json();
-      const endTime = Date.now();
-      const responseTime = endTime - startTime;
-      
-      // Extract content and thinking
-      const fullContent = data.choices[0]?.message?.content || "Sorry, I couldn't generate a response.";
-      let thinking = "";
-      let content = fullContent;
+      assistantMessageId = `${Date.now()}-assistant`;
+      const placeholderMessage: Message = {
+        role: 'assistant',
+        content: '',
+        thinking: '',
+        id: assistantMessageId,
+        references: [],
+      };
 
-      // Parse thinking if present
-      if (fullContent.includes("<think>") && fullContent.includes("</think>")) {
-        const thinkMatch = fullContent.match(/<think>([\s\S]*?)<\/think>/);
-        if (thinkMatch) {
-          thinking = thinkMatch[1].trim();
-          content = fullContent.replace(/<think>[\s\S]*?<\/think>/, "").trim();
+      setMessages((prev: Message[]) => [...prev, placeholderMessage]);
+
+      const updateAssistantMessage = (partial: Partial<Message>) => {
+        if (!assistantMessageId) return;
+        setMessages((prev: Message[]) =>
+          prev.map((msg) => (msg.id === assistantMessageId ? { ...msg, ...partial } : msg))
+        );
+      };
+
+      let rawAssistantContent = '';
+      let rawAssistantThinking = '';
+      let latestUsage: any = null;
+      let latestPayload: any = null;
+
+      const pushCombinedContent = () => {
+        const combined = rawAssistantThinking
+          ? `<think>${rawAssistantThinking}</think>${rawAssistantContent}`
+          : rawAssistantContent;
+        const { thinking, content } = splitThinkingFromContent(combined);
+        updateAssistantMessage({ content, thinking });
+      };
+
+      const contentType = response.headers.get('content-type') ?? '';
+
+      if (contentType.includes('text/event-stream') && response.body) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        let eventPayload = '';
+        let receivedDone = false;
+
+        const processEventPayload = (payload: string) => {
+          const trimmed = payload.trim();
+          if (!trimmed) {
+            return;
+          }
+
+          if (trimmed === '[DONE]') {
+            receivedDone = true;
+            return;
+          }
+
+          try {
+            const parsed = JSON.parse(trimmed);
+            latestPayload = parsed;
+            if (parsed?.usage) {
+              latestUsage = parsed.usage;
+            }
+
+            const choice = parsed?.choices?.[0];
+            if (choice?.delta?.content) {
+              rawAssistantContent += choice.delta.content;
+              pushCombinedContent();
+            }
+            if (choice?.delta?.thinking) {
+              rawAssistantThinking += choice.delta.thinking;
+              pushCombinedContent();
+            }
+            if (choice?.message?.content) {
+              rawAssistantContent = choice.message.content;
+              pushCombinedContent();
+            }
+            if (choice?.message?.thinking) {
+              rawAssistantThinking = choice.message.thinking;
+              pushCombinedContent();
+            }
+
+            if (parsed?.references || choice?.message?.references || choice?.delta?.references) {
+              const refs = extractVeniceReferences(parsed);
+              if (refs.length > 0) {
+                updateAssistantMessage({ references: refs });
+              }
+            }
+          } catch (streamError) {
+            console.error('Failed to parse stream chunk:', streamError);
+          }
+        };
+
+        while (!receivedDone) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split(/\r?\n/);
+          buffer = lines.pop() ?? '';
+
+          for (const line of lines) {
+            if (line.startsWith('data:')) {
+              eventPayload += line.replace(/^data:\s*/, '');
+            } else if (line.trim() === '') {
+              processEventPayload(eventPayload);
+              eventPayload = '';
+              if (receivedDone) {
+                break;
+              }
+            }
+          }
         }
+
+        processEventPayload(eventPayload);
+        reader.releaseLock?.();
+      } else {
+        const data = await response.json();
+        latestPayload = data;
+        latestUsage = data?.usage;
+        rawAssistantContent = data?.choices?.[0]?.message?.content ?? '';
+        rawAssistantThinking = data?.choices?.[0]?.message?.thinking ?? '';
+        pushCombinedContent();
       }
 
-      const references = extractVeniceReferences(data);
-      content = sanitizeContentWithReferences(content, references);
+      const endTime = Date.now();
+      const responseTime = endTime - startTime;
 
-      // Calculate metrics
-      const usage = data.usage || {};
-      const inputTokens = usage.prompt_tokens || 0;
-      const outputTokens = usage.completion_tokens || 0;
-      const totalTokens = usage.total_tokens || inputTokens + outputTokens;
-      
-      // Find current model for pricing
-      const currentModel = models.find((m: VeniceModel) => m.id === settings.model);
+      const finalPayload = latestPayload ?? {
+        choices: [{ message: { content: rawAssistantContent } }],
+      };
+
+      const combinedFinalText = rawAssistantThinking
+        ? `<think>${rawAssistantThinking}</think>${rawAssistantContent}`
+        : rawAssistantContent || finalPayload?.choices?.[0]?.message?.content || '';
+
+      const { thinking: finalThinking, content: finalContent } = splitThinkingFromContent(combinedFinalText);
+      const references = extractVeniceReferences(finalPayload);
+      const sanitizedContent = sanitizeContentWithReferences(finalContent, references);
+
+      const usage = latestUsage ?? finalPayload?.usage ?? {};
+      const inputTokens = usage?.prompt_tokens ?? 0;
+      const outputTokens = usage?.completion_tokens ?? 0;
+      const totalTokens = usage?.total_tokens ?? inputTokens + outputTokens;
+
       const inputUsd = resolveUsdPrice(currentModel?.model_spec?.pricing?.input);
       const outputUsd = resolveUsdPrice(currentModel?.model_spec?.pricing?.output);
       const inputCost = inputUsd ? (inputTokens / 1_000_000) * inputUsd : 0;
       const outputCost = outputUsd ? (outputTokens / 1_000_000) * outputUsd : 0;
       const totalCost = inputCost + outputCost;
-      
-      const tokensPerSecond = outputTokens > 0 ? (outputTokens / (responseTime / 1000)) : 0;
-      
-      // Add AI response with metrics
-      const aiMessage: Message = {
-        role: 'assistant',
-        content: content,
-        thinking: thinking,
-        id: (Date.now() + 1).toString(),
+      const tokensPerSecond = outputTokens > 0 && responseTime > 0 ? outputTokens / (responseTime / 1000) : 0;
+
+      updateAssistantMessage({
+        content: sanitizedContent || finalContent || "Sorry, I couldn't generate a response.",
+        thinking: finalThinking,
+        references,
         metrics: {
           inputTokens,
           outputTokens,
@@ -1159,16 +1329,33 @@ export default function ChatScreen() {
           responseTime,
           model: settings.model,
         },
-        references,
-      };
-
-      setMessages((prev: Message[]) => [...prev, aiMessage]);
+      });
     } catch (error) {
       console.error('Error sending message:', error);
-      Alert.alert('Error', 'Failed to send message. Please try again.');
+      const isAbortError = error instanceof Error && error.name === 'AbortError';
+      const fallbackText = isAbortError
+        ? 'The request was cancelled. Please try again.'
+        : 'Something went wrong. Please try again.';
+
+      if (assistantMessageId) {
+        setMessages((prev: Message[]) =>
+          prev.map((msg) =>
+            msg.id === assistantMessageId
+              ? {
+                  ...msg,
+                  content: fallbackText,
+                  thinking: '',
+                }
+              : msg
+          )
+        );
+      }
+
+      Alert.alert(isAbortError ? 'Request cancelled' : 'Error', fallbackText);
     } finally {
       setIsLoading(false);
       setAttachedImages([]);
+      activeRequestControllerRef.current = null;
     }
   };
 
@@ -1700,50 +1887,70 @@ export default function ChatScreen() {
                 <Ionicons name="chevron-down" size={16} color={palette.accentStrong} />
               </TouchableOpacity>
 
-              <View style={styles.sizeChipsRow}>
-                {suggestedImageSizes.map((size) => {
-                  const isActive = imageOptions.width === size.width && imageOptions.height === size.height;
-                  return (
-                    <TouchableOpacity
-                      key={`${size.width}x${size.height}`}
-                      style={[styles.sizeChip, isActive && styles.sizeChipActive]}
-                      onPress={() => handleSelectImageSize(size.width, size.height)}
-                    >
-                      <Text style={[styles.sizeChipText, isActive && styles.sizeChipTextActive]}>
-                        {size.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+              <TouchableOpacity
+                style={styles.advancedToggle}
+                onPress={() => setShowAdvancedImageOptions((prev) => !prev)}
+                activeOpacity={0.85}
+              >
+                <View style={styles.advancedToggleLeft}>
+                  <Ionicons name="options-outline" size={18} color={palette.accentStrong} />
+                  <Text style={styles.advancedToggleText}>Advanced options</Text>
+                </View>
+                <Ionicons
+                  name={showAdvancedImageOptions ? 'chevron-up' : 'chevron-down'}
+                  size={18}
+                  color={palette.accentStrong}
+                />
+              </TouchableOpacity>
 
-              <View style={styles.imageControlsRow}>
-                <View style={styles.controlGroup}>
-                  <Text style={styles.controlLabel}>Steps</Text>
-                  <View style={styles.controlButtons}>
-                    <TouchableOpacity style={styles.controlButton} onPress={() => adjustImageSteps(-1)}>
-                      <Ionicons name="remove" size={18} color={palette.textPrimary} />
-                    </TouchableOpacity>
-                    <Text style={styles.controlValue}>{imageOptions.steps}</Text>
-                    <TouchableOpacity style={styles.controlButton} onPress={() => adjustImageSteps(1)}>
-                      <Ionicons name="add" size={18} color={palette.textPrimary} />
-                    </TouchableOpacity>
+              {showAdvancedImageOptions && (
+                <View style={styles.advancedOptionsContainer}>
+                  <View style={styles.sizeChipsRow}>
+                    {suggestedImageSizes.map((size) => {
+                      const isActive = imageOptions.width === size.width && imageOptions.height === size.height;
+                      return (
+                        <TouchableOpacity
+                          key={`${size.width}x${size.height}`}
+                          style={[styles.sizeChip, isActive && styles.sizeChipActive]}
+                          onPress={() => handleSelectImageSize(size.width, size.height)}
+                        >
+                          <Text style={[styles.sizeChipText, isActive && styles.sizeChipTextActive]}>
+                            {size.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  <View style={styles.imageControlsRow}>
+                    <View style={styles.controlGroup}>
+                      <Text style={styles.controlLabel}>Steps</Text>
+                      <View style={styles.controlButtons}>
+                        <TouchableOpacity style={styles.controlButton} onPress={() => adjustImageSteps(-1)}>
+                          <Ionicons name="remove" size={18} color={palette.textPrimary} />
+                        </TouchableOpacity>
+                        <Text style={styles.controlValue}>{imageOptions.steps}</Text>
+                        <TouchableOpacity style={styles.controlButton} onPress={() => adjustImageSteps(1)}>
+                          <Ionicons name="add" size={18} color={palette.textPrimary} />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    <View style={styles.controlGroup}>
+                      <Text style={styles.controlLabel}>Guidance</Text>
+                      <View style={styles.controlButtons}>
+                        <TouchableOpacity style={styles.controlButton} onPress={() => adjustImageGuidance(-0.5)}>
+                          <Ionicons name="remove" size={18} color={palette.textPrimary} />
+                        </TouchableOpacity>
+                        <Text style={styles.controlValue}>{imageOptions.guidance.toFixed(1)}</Text>
+                        <TouchableOpacity style={styles.controlButton} onPress={() => adjustImageGuidance(0.5)}>
+                          <Ionicons name="add" size={18} color={palette.textPrimary} />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
                   </View>
                 </View>
-
-                <View style={styles.controlGroup}>
-                  <Text style={styles.controlLabel}>Guidance</Text>
-                  <View style={styles.controlButtons}>
-                    <TouchableOpacity style={styles.controlButton} onPress={() => adjustImageGuidance(-0.5)}>
-                      <Ionicons name="remove" size={18} color={palette.textPrimary} />
-                    </TouchableOpacity>
-                    <Text style={styles.controlValue}>{imageOptions.guidance.toFixed(1)}</Text>
-                    <TouchableOpacity style={styles.controlButton} onPress={() => adjustImageGuidance(0.5)}>
-                      <Ionicons name="add" size={18} color={palette.textPrimary} />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </View>
+              )}
 
               <View style={styles.imagePromptField}>
                 <TextInput
@@ -2363,6 +2570,35 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: palette.textPrimary,
     fontFamily: fonts.medium,
+  },
+  advancedToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: palette.surfaceElevated,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: palette.border,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
+  },
+  advancedToggleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  advancedToggleText: {
+    fontSize: 14,
+    color: palette.textPrimary,
+    fontFamily: fonts.medium,
+  },
+  advancedOptionsContainer: {
+    gap: space.md,
+    backgroundColor: palette.surfaceElevated,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: palette.border,
+    padding: space.md,
   },
   sizeChipsRow: {
     flexDirection: 'row',
