@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback, memo } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  TextInput, 
+  TouchableOpacity, 
   KeyboardAvoidingView,
   Platform,
   Alert,
@@ -109,38 +109,62 @@ const getModelDefaultMaxTokens = (model?: VeniceModel | null): number | undefine
 const isImageModel = (model?: VeniceModel | null): boolean => {
   if (!model) return false;
 
+  // Check model type first
   const modelType = model.type?.toLowerCase?.() ?? '';
-  if (modelType.includes('image') || modelType.includes('vision') || modelType.includes('diffusion')) {
+  if (modelType === 'image' || modelType.includes('image') || modelType.includes('diffusion')) {
     return true;
   }
 
+  // Check capabilities
   const capabilities = model.model_spec?.capabilities || {};
-  if (capabilities.supportsImageGeneration || capabilities.image || capabilities.supportsImage || capabilities.vision) {
+  if (capabilities.supportsImageGeneration === true || capabilities.image === true || capabilities.supportsImage === true) {
     return true;
   }
 
+  // Check capability keys
   const capabilityKeys = Object.keys(capabilities);
-  if (capabilityKeys.some((key) => key.toLowerCase().includes('image'))) {
+  if (capabilityKeys.some((key) => {
+    const lowerKey = key.toLowerCase();
+    return (lowerKey.includes('image') || lowerKey.includes('generation')) && capabilities[key] === true;
+  })) {
     return true;
   }
 
+  // Check traits
   if (Array.isArray(model.model_spec?.traits)) {
-    if (model.model_spec.traits.some((trait) => trait.toLowerCase().includes('image'))) {
+    if (model.model_spec.traits.some((trait) => {
+      const lowerTrait = String(trait).toLowerCase();
+      return lowerTrait.includes('image') || lowerTrait.includes('generation') || lowerTrait.includes('diffusion');
+    })) {
       return true;
     }
   }
 
+  // Check pricing - if it has generation pricing, it's likely an image model
   if (model.model_spec?.pricing?.generation) {
     return true;
   }
 
+  // Check model source
   const source = model.model_spec?.modelSource?.toLowerCase() ?? '';
-  if (source.includes('stable-diffusion') || source.includes('image') || source.includes('flux')) {
+  if (source.includes('stable-diffusion') || source.includes('flux') || source.includes('dall-e') || source.includes('midjourney')) {
     return true;
   }
 
+  // Check model ID - be more lenient
   const modelId = model.id.toLowerCase();
-  return modelId.includes('image') || modelId.includes('vision') || modelId.includes('flux');
+  const imageKeywords = ['image', 'flux', 'sd', 'stable-diffusion', 'dalle', 'midjourney', 'imagen', 'venice-sd', 'venice-flux'];
+  if (imageKeywords.some(keyword => modelId.includes(keyword))) {
+    return true;
+  }
+
+  // Check model name
+  const modelName = model.model_spec?.name?.toLowerCase() ?? '';
+  if (imageKeywords.some(keyword => modelName.includes(keyword))) {
+    return true;
+  }
+
+  return false;
 };
 
 const mistralMatcher = /mistral/i;
@@ -259,6 +283,48 @@ const buildSuggestedImageSizes = (model: VeniceModel | undefined, settings: AppS
 
 const inlineMarkdownRegex = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[(.+?)\]\((.+?)\))/g;
 
+// Extract formatted text from markdown content for clipboard
+const extractFormattedText = (content: string): string => {
+  if (!content) return '';
+  
+  // Replace markdown with formatted text
+  let formatted = content;
+  
+  // Convert headings
+  formatted = formatted.replace(/^#{1,6}\s+(.+)$/gm, (match, text) => {
+    const level = match.match(/^#+/)?.[0].length ?? 1;
+    const prefix = '#'.repeat(level) + ' ';
+    return prefix + text;
+  });
+  
+  // Convert bold
+  formatted = formatted.replace(/\*\*(.+?)\*\*/g, '**$1**');
+  
+  // Convert italic
+  formatted = formatted.replace(/\*(.+?)\*/g, '*$1*');
+  
+  // Convert code blocks
+  formatted = formatted.replace(/```([\s\S]*?)```/g, '```\n$1\n```');
+  formatted = formatted.replace(/`(.+?)`/g, '`$1`');
+  
+  // Convert links to readable format
+  formatted = formatted.replace(/\[(.+?)\]\((.+?)\)/g, '$1 ($2)');
+  
+  // Convert lists - preserve bullet points
+  formatted = formatted.replace(/^\s*[-*]\s+(.+)$/gm, '• $1');
+  
+  // Convert numbered lists
+  formatted = formatted.replace(/^\s*\d+\.\s+(.+)$/gm, (match, text, offset, string) => {
+    const lineNum = string.substring(0, offset).split('\n').length;
+    return `${lineNum}. ${text}`;
+  });
+  
+  // Clean up extra whitespace but preserve paragraph breaks
+  formatted = formatted.replace(/\n{3,}/g, '\n\n');
+  
+  return formatted.trim();
+};
+
 const renderInlineMarkdown = (text: string, keyPrefix: string) => {
   const nodes: React.ReactNode[] = [];
   let lastIndex = 0;
@@ -343,7 +409,46 @@ const renderInlineMarkdown = (text: string, keyPrefix: string) => {
 };
 
 const RichText: React.FC<{ content: string }> = ({ content }) => {
-  const sections = content.split(/\n{2,}/g).filter((section) => section.trim().length > 0);
+  if (!content || content.trim().length === 0) {
+    return null;
+  }
+
+  // Split by double newlines for paragraphs, but also handle code blocks
+  const sections: string[] = [];
+  let currentSection = '';
+  let inCodeBlock = false;
+  const lines = content.split('\n');
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const isCodeBlockStart = /^```/.test(line);
+    const isCodeBlockEnd = /^```/.test(line) && inCodeBlock;
+
+    if (isCodeBlockStart && !inCodeBlock) {
+      if (currentSection.trim()) {
+        sections.push(currentSection.trim());
+        currentSection = '';
+      }
+      inCodeBlock = true;
+      currentSection += line + '\n';
+    } else if (isCodeBlockEnd) {
+      currentSection += line;
+      sections.push(currentSection);
+      currentSection = '';
+      inCodeBlock = false;
+    } else if (inCodeBlock) {
+      currentSection += line + '\n';
+    } else if (line.trim() === '' && currentSection.trim()) {
+      sections.push(currentSection.trim());
+      currentSection = '';
+    } else if (line.trim() !== '') {
+      currentSection += line + '\n';
+    }
+  }
+
+  if (currentSection.trim()) {
+    sections.push(currentSection.trim());
+  }
 
   if (sections.length === 0) {
     return null;
@@ -353,7 +458,30 @@ const RichText: React.FC<{ content: string }> = ({ content }) => {
     <View style={styles.richTextContainer}>
       {sections.map((section, sectionIndex) => {
         const trimmed = section.trim();
+        if (!trimmed) return null;
 
+        // Code blocks
+        if (trimmed.startsWith('```')) {
+          const codeMatch = trimmed.match(/^```(\w+)?\n([\s\S]*?)```$/);
+          if (codeMatch) {
+            const language = codeMatch[1] || '';
+            const code = codeMatch[2];
+            return (
+              <View key={`code-${sectionIndex}`} style={styles.codeBlock}>
+                {language && (
+                  <Text style={styles.codeBlockLanguage} selectable>
+                    {language}
+                  </Text>
+                )}
+                <Text style={styles.codeBlockText} selectable>
+                  {code}
+                </Text>
+              </View>
+            );
+          }
+        }
+
+        // Headings
         if (/^#{1,6}\s/.test(trimmed)) {
           const level = trimmed.match(/^#+/)?.[0].length ?? 1;
           const headingLevel = Math.min(level, 3);
@@ -362,22 +490,33 @@ const RichText: React.FC<{ content: string }> = ({ content }) => {
           const heading = trimmed.replace(/^#{1,6}\s*/, '');
           return (
             <Text key={`heading-${sectionIndex}`} style={[styles.headingText, headingStyle]} selectable>
-              {heading}
+              {renderInlineMarkdown(heading, `heading-${sectionIndex}`)}
             </Text>
           );
         }
 
-        if (/^\s*[-*]\s+/m.test(trimmed)) {
-          const bulletLines = trimmed.split(/\n/g).filter((line) => /^\s*[-*]\s+/.test(line));
+        // Lists (bullets and numbered)
+        if (/^\s*[-*]\s+/m.test(trimmed) || /^\s*\d+\.\s+/m.test(trimmed)) {
+          const isNumbered = /^\s*\d+\.\s+/m.test(trimmed);
+          const listLines = trimmed.split(/\n/g).filter((line) => 
+            /^\s*[-*]\s+/.test(line) || /^\s*\d+\.\s+/.test(line)
+          );
           return (
             <View key={`list-${sectionIndex}`} style={styles.bulletList}>
-              {bulletLines.map((line, lineIndex) => {
-                const text = line.replace(/^\s*[-*]\s+/, '');
+              {listLines.map((line, lineIndex) => {
+                const text = line.replace(/^\s*[-*]\s+/, '').replace(/^\s*\d+\.\s+/, '');
+                const isNumberedItem = /^\s*\d+\.\s+/.test(line);
                 return (
                   <View key={`list-${sectionIndex}-${lineIndex}`} style={styles.bulletRow}>
-                    <Text style={styles.bulletDot} selectable>
-                      •
-                    </Text>
+                    {isNumbered ? (
+                      <Text style={styles.bulletNumber} selectable>
+                        {lineIndex + 1}.
+                      </Text>
+                    ) : (
+                      <Text style={styles.bulletDot} selectable>
+                        •
+                      </Text>
+                    )}
                     <Text style={styles.inlineText} selectable>
                       {renderInlineMarkdown(text, `list-${sectionIndex}-${lineIndex}`)}
                     </Text>
@@ -388,6 +527,7 @@ const RichText: React.FC<{ content: string }> = ({ content }) => {
           );
         }
 
+        // Regular paragraphs
         if (trimmed.includes('\n')) {
           const lines = trimmed.split('\n');
           return (
@@ -723,6 +863,21 @@ export default function ChatScreen() {
         ? data.models
         : [];
 
+      // Debug: Log image models
+      const detectedImageModels = incomingModels.filter((model) => isImageModel(model));
+      console.log(`Loaded ${incomingModels.length} total models, ${detectedImageModels.length} image models`);
+      if (detectedImageModels.length > 0) {
+        console.log('Image models:', detectedImageModels.map(m => ({ id: m.id, name: m.model_spec?.name, type: m.type })));
+      } else {
+        console.log('No image models detected. Sample models:', incomingModels.slice(0, 3).map(m => ({
+          id: m.id,
+          name: m.model_spec?.name,
+          type: m.type,
+          capabilities: m.model_spec?.capabilities,
+          pricing: m.model_spec?.pricing
+        })));
+      }
+
       setModels(incomingModels);
     } catch (error) {
       console.error('Failed to load models:', error);
@@ -756,7 +911,7 @@ export default function ChatScreen() {
       }
 
       updateSettings(updates);
-      setShowModelPicker(false);
+    setShowModelPicker(false);
     },
     [textModels, updateSettings]
   );
@@ -1131,25 +1286,25 @@ export default function ChatScreen() {
     setMessages((prev: Message[]) => [...prev, newUserMessage]);
 
     let assistantMessageId: string | null = null;
-    const startTime = Date.now();
-
+      const startTime = Date.now();
+      
     try {
       const currentModel = models.find((m: VeniceModel) => m.id === settings.model);
 
       const conversationHistory: any[] = conversationMessages.map((msg: Message) => {
-        if (msg.role === 'user' && msg.images && msg.images.length > 0) {
-          return {
-            role: 'user',
-            content: [
-              { type: 'text', text: msg.content },
+          if (msg.role === 'user' && msg.images && msg.images.length > 0) {
+            return {
+              role: 'user',
+              content: [
+                { type: 'text', text: msg.content },
               ...msg.images.map((img) => ({
                 type: 'image_url',
                 image_url: { url: img.dataUrl ?? img.uri },
               })),
             ],
-          };
-        }
-        return { role: msg.role, content: msg.content };
+            };
+          }
+          return { role: msg.role, content: msg.content };
       });
 
       const requestBody: Record<string, any> = {
@@ -1325,7 +1480,7 @@ export default function ChatScreen() {
         processEventPayload(eventPayload);
         reader.releaseLock?.();
       } else {
-        const data = await response.json();
+      const data = await response.json();
         latestPayload = data;
         latestUsage = data?.usage;
         rawAssistantContent = data?.choices?.[0]?.message?.content ?? '';
@@ -1335,7 +1490,7 @@ export default function ChatScreen() {
 
       const endTime = Date.now();
       const responseTime = endTime - startTime;
-
+      
       const finalPayload = latestPayload ?? {
         choices: [{ message: { content: rawAssistantContent } }],
       };
@@ -1417,13 +1572,15 @@ export default function ChatScreen() {
     return modelIdToName.get(modelId) || modelId;
   }, [modelIdToName]);
 
-  const copyToClipboard = useCallback(async (text: string) => {
+  const copyToClipboard = useCallback(async (content: string) => {
     try {
-      await Clipboard.setStringAsync(text);
+      // Extract formatted text from markdown content
+      const formattedText = extractFormattedText(content);
+      await Clipboard.setStringAsync(formattedText);
       if (Platform.OS !== 'web') {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
-      Alert.alert('Copied!', 'Response copied to clipboard');
+      Alert.alert('Copied!', 'Response copied to clipboard with formatting');
     } catch (error) {
       Alert.alert('Error', 'Failed to copy to clipboard');
     }
@@ -1485,7 +1642,7 @@ export default function ChatScreen() {
                   <>
                     <Text style={styles.referenceText} selectable>
                       {index + 1}. {ref.title || ref.url || 'Source'}
-                    </Text>
+          </Text>
                     {ref.snippet ? (
                       <Text style={styles.referenceSnippet} selectable>
                         {ref.snippet}
@@ -1515,9 +1672,9 @@ export default function ChatScreen() {
               })}
             </View>
           )}
-
+          
           {/* Copy Button */}
-          <TouchableOpacity
+          <TouchableOpacity 
             style={styles.copyButton}
             onPress={() => copyToClipboard(msg.content)}
           >
@@ -1690,26 +1847,26 @@ export default function ChatScreen() {
         <Text style={styles.fetchingText}>Crafting magic…</Text>
         <View style={styles.typingDots}>
           {pulses.map((value, index) => (
-            <Animated.View
+          <Animated.View
               key={index}
-              style={[
+            style={[
                 styles.typingDot,
-                {
-                  transform: [
-                    {
+              {
+                transform: [
+                  {
                       scale: value.interpolate({
                         inputRange: [0, 1],
                         outputRange: [0.8, 1.25],
-                      }),
-                    },
-                  ],
+                    }),
+                  },
+                ],
                   opacity: value.interpolate({
                     inputRange: [0, 1],
                     outputRange: [0.4, 1],
                   }),
-                },
-              ]}
-            />
+              },
+            ]}
+          />
           ))}
         </View>
       </View>
@@ -1723,48 +1880,48 @@ export default function ChatScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
-      <KeyboardAvoidingView
-        style={styles.container}
+      <KeyboardAvoidingView 
+        style={styles.container} 
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <BlurView intensity={65} tint="dark" style={styles.header}>
           <View style={styles.headerContent}>
-            <View style={styles.headerLeft}>
-              <View style={styles.logoContainer}>
-                <Text style={styles.logoIcon}>✨</Text>
-                <Text style={styles.logoText}>vGPT</Text>
-              </View>
+          <View style={styles.headerLeft}>
+            <View style={styles.logoContainer}>
+              <Text style={styles.logoIcon}>✨</Text>
+              <Text style={styles.logoText}>vGPT</Text>
             </View>
-
-            <View style={styles.headerRight}>
-              <TouchableOpacity
-                style={styles.modelSelector}
-                onPress={() => setShowModelPicker(true)}
-                activeOpacity={0.8}
-              >
+          </View>
+          
+          <View style={styles.headerRight}>
+            <TouchableOpacity 
+              style={styles.modelSelector}
+              onPress={() => setShowModelPicker(true)}
+              activeOpacity={0.8}
+            >
                 <Text style={styles.modelText} numberOfLines={1}>
                   {activeTab === 'chat'
                     ? getModelDisplayName(settings.model)
                     : getModelDisplayName(settings.imageModel)}
-                </Text>
+              </Text>
                 <Ionicons name="chevron-down" size={16} color={palette.accentStrong} />
-              </TouchableOpacity>
+            </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.settingsButton}
-                onPress={() => router.push('/settings')}
-                activeOpacity={0.8}
-              >
+            <TouchableOpacity 
+              style={styles.settingsButton}
+              onPress={() => router.push('/settings')}
+              activeOpacity={0.8}
+            >
                 <Ionicons name="settings" size={20} color={palette.accentStrong} />
-              </TouchableOpacity>
+            </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.newChatButton}
+            <TouchableOpacity 
+              style={styles.newChatButton}
                 onPress={activeTab === 'chat' ? handleNewChat : () => setGeneratedImages([])}
-                activeOpacity={0.8}
-              >
+              activeOpacity={0.8}
+            >
                 <Ionicons name={activeTab === 'chat' ? 'add' : 'refresh'} size={24} color={palette.accentStrong} />
-              </TouchableOpacity>
+            </TouchableOpacity>
             </View>
           </View>
         </BlurView>
@@ -1788,93 +1945,90 @@ export default function ChatScreen() {
 
         {activeTab === 'chat' ? (
           <>
-            <FlatList
-              ref={flatListRef}
-              data={messages}
-              style={styles.messagesContainer}
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          style={styles.messagesContainer}
               keyExtractor={keyExtractor}
-              renderItem={({ item }: { item: Message }) => <MessageItem item={item} />}
-              contentContainerStyle={messages.length === 0 ? styles.emptyState : styles.messagesContent}
-              ListEmptyComponent={
-                <View style={styles.welcomeContainer}>
-                  <View style={styles.welcomeIconContainer}>
-                    <Text style={styles.welcomeIcon}>✨</Text>
-                    <Text style={styles.sparkleIcon}>✨</Text>
-                  </View>
-                  <Text style={styles.welcomeTitle}>Ready to chat!</Text>
-                  <Text style={styles.welcomeSubtitle}>
-                    Send a message to start the conversation with {getModelDisplayName(settings.model)}
-                  </Text>
+          renderItem={({ item }: { item: Message }) => <MessageItem item={item} />}
+          contentContainerStyle={messages.length === 0 ? styles.emptyState : styles.messagesContent}
+          ListEmptyComponent={
+            <View style={styles.welcomeContainer}>
+              <View style={styles.welcomeIconContainer}>
+                <Text style={styles.welcomeIcon}>✨</Text>
+                <Text style={styles.sparkleIcon}>✨</Text>
+              </View>
+              <Text style={styles.welcomeTitle}>Ready to chat!</Text>
+              <Text style={styles.welcomeSubtitle}>
+                Send a message to start the conversation with {getModelDisplayName(settings.model)}
+              </Text>
+            </View>
+          }
+          ListFooterComponent={
+            isLoading ? (
+              <View style={styles.loadingMessage}>
+                <View style={[styles.assistantBubble, { alignSelf: 'flex-start' }]}>
+                  <TypingIndicator />
                 </View>
-              }
-              ListFooterComponent={
-                isLoading ? (
-                  <View style={styles.loadingMessage}>
-                    <View style={[styles.assistantBubble, { alignSelf: 'flex-start' }]}>
-                      <TypingIndicator />
-                    </View>
-                  </View>
-                ) : null
-              }
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
+              </View>
+            ) : null
+          }
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
               removeClippedSubviews={Platform.OS !== 'web'}
-              initialNumToRender={12}
-              maxToRenderPerBatch={12}
-              windowSize={5}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={5}
               maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-              onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-            />
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+        />
 
             <View style={styles.composerContainer}>
-              {attachedImages.length > 0 && (
+          {attachedImages.length > 0 && (
                 <ScrollView
                   horizontal
                   style={styles.attachmentsBar}
                   contentContainerStyle={styles.attachmentsContent}
                   showsHorizontalScrollIndicator={false}
                 >
-                  {attachedImages.map((img: { uri: string; mimeType: string }) => (
-                    <View key={img.uri} style={styles.attachmentItem}>
-                      <ImagePreview uri={img.uri} />
-                      <TouchableOpacity style={styles.removeAttachmentBtn} onPress={() => removeAttachedImage(img.uri)}>
-                        <Ionicons name="close" size={14} color="#fff" />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
+              {attachedImages.map((img: { uri: string; mimeType: string }) => (
+                <View key={img.uri} style={styles.attachmentItem}>
+                  <ImagePreview uri={img.uri} />
+                  <TouchableOpacity style={styles.removeAttachmentBtn} onPress={() => removeAttachedImage(img.uri)}>
+                    <Ionicons name="close" size={14} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              ))}
                 </ScrollView>
               )}
               <View style={styles.composerShell}>
                 <View style={styles.composerInner}>
-                  <View style={styles.avatarBubble}>
-                    <Text style={styles.avatarGlyph}>🪄</Text>
-                  </View>
-                  <TextInput
-                    style={styles.textInput}
+            <TextInput
+              style={styles.textInput}
                     placeholder="Message the AI..."
                     placeholderTextColor={palette.textMuted}
-                    value={message}
-                    onChangeText={setMessage}
-                    multiline
-                    maxLength={4000}
-                    editable={!isLoading}
-                    autoCorrect
-                    autoCapitalize="sentences"
-                  />
+              value={message}
+              onChangeText={setMessage}
+              multiline
+              maxLength={4000}
+              editable={!isLoading}
+              autoCorrect
+              autoCapitalize="sentences"
+            />
                 </View>
                 <View style={styles.composerActions}>
                   <TouchableOpacity onPress={pickImageFromLibrary} style={styles.iconButton} activeOpacity={0.8}>
                     <Ionicons name="image-outline" size={20} color={palette.textSecondary} />
                   </TouchableOpacity>
-                  <TouchableOpacity
+            <TouchableOpacity
                     style={[styles.sendButton, (!message.trim() || isLoading) && styles.sendButtonDisabled]}
-                    onPress={handleSend}
-                    disabled={!message.trim() || isLoading}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="arrow-up" size={20} color="white" />
-                  </TouchableOpacity>
-                </View>
+              onPress={handleSend}
+              disabled={!message.trim() || isLoading}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="arrow-up" size={20} color="white" />
+            </TouchableOpacity>
+          </View>
               </View>
             </View>
           </>
@@ -2057,8 +2211,8 @@ export default function ChatScreen() {
                     {activeTab === 'chat'
                       ? 'No chat models available.'
                       : 'No image models available.'}
-                  </Text>
-                </View>
+                    </Text>
+                    </View>
               )}
             />
           )}
@@ -2357,6 +2511,34 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: palette.accentStrong,
   },
+  bulletNumber: {
+    fontSize: 16,
+    color: palette.accentStrong,
+    fontFamily: fonts.medium,
+    minWidth: 24,
+  },
+  codeBlock: {
+    backgroundColor: palette.surfaceActive,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: palette.border,
+    padding: space.md,
+    marginVertical: space.xs,
+  },
+  codeBlockLanguage: {
+    fontSize: 12,
+    color: palette.textMuted,
+    fontFamily: fonts.medium,
+    textTransform: 'uppercase',
+    marginBottom: space.xs,
+    letterSpacing: 0.5,
+  },
+  codeBlockText: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: palette.textPrimary,
+    fontFamily: fonts.mono,
+  },
   referencesContainer: {
     marginTop: space.md,
     paddingTop: space.md,
@@ -2477,18 +2659,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.md,
-  },
-  avatarBubble: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: palette.accentSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarGlyph: {
-    fontSize: 18,
-    color: palette.accentStrong,
   },
   composerActions: {
     flexDirection: 'row',
