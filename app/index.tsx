@@ -1023,6 +1023,46 @@ export default function ChatScreen() {
     });
   }, []);
 
+  const handleDownloadImage = useCallback(async (imageData: string, prompt: string) => {
+    try {
+      if (Platform.OS === 'web') {
+        // For web: create download link
+        const base64Data = imageData.split(',')[1];
+        const binaryString = atob(base64Data);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: 'image/png' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        const sanitizedPrompt = prompt.replace(/[^a-z0-9]/gi, '_').substring(0, 50);
+        link.download = `vGPT_${sanitizedPrompt}_${Date.now()}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        Alert.alert('Downloaded!', 'Image saved as PNG');
+      } else {
+        // For mobile: save to file system
+        const base64Data = imageData.split(',')[1];
+        const fileName = `vGPT_${Date.now()}.png`;
+        const fileUri = `${FileSystem.documentDirectory}${fileName}`;
+        await FileSystem.writeAsStringAsync(fileUri, base64Data, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        Alert.alert('Saved!', `Image saved to ${fileName}`);
+      }
+      if (Platform.OS !== 'web') {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch (error) {
+      console.error('Failed to download image:', error);
+      Alert.alert('Error', 'Failed to download image');
+    }
+  }, []);
+
   const syncImageSettings = useCallback(
     (next: { steps?: number; width?: number; height?: number; guidance?: number }) => {
       setImageOptions((prev) => {
@@ -1067,7 +1107,7 @@ export default function ChatScreen() {
         prompt,
         width,
         height,
-        format: 'webp',
+        format: 'png', // Use PNG for higher quality
       };
 
       if (currentImageModel?.model_spec?.constraints?.steps != null) {
@@ -2093,7 +2133,9 @@ export default function ChatScreen() {
             <ScrollView
               style={styles.imageScroll}
               contentContainerStyle={generatedImages.length === 0 ? styles.imageEmptyState : styles.imageResults}
-              showsVerticalScrollIndicator={false}
+              showsVerticalScrollIndicator={true}
+              nestedScrollEnabled={true}
+              keyboardShouldPersistTaps="handled"
             >
               {imageError && (
                 <View style={styles.errorBanner}>
@@ -2112,14 +2154,37 @@ export default function ChatScreen() {
               ) : (
                 generatedImages.map((item) => (
                   <View key={item.id} style={styles.generatedCard}>
-                    <Image source={{ uri: item.imageData }} style={styles.generatedImage} contentFit="cover" />
+                    <View style={styles.generatedImageContainer}>
+                      <Image 
+                        source={{ uri: item.imageData }} 
+                        style={[
+                          styles.generatedImage,
+                          item.width && item.height ? {
+                            aspectRatio: item.width / item.height,
+                            maxHeight: 800,
+                          } : { minHeight: 200 }
+                        ]}
+                        contentFit="contain"
+                        transition={200}
+                      />
+                    </View>
                     <View style={styles.generatedMeta}>
                       <Text style={styles.generatedPrompt} numberOfLines={2} selectable>
                         {item.prompt}
                       </Text>
-                      <Text style={styles.generatedDetails} selectable>
-                        {getModelDisplayName(item.modelId)} • {new Date(item.createdAt).toLocaleTimeString()}
-                      </Text>
+                      <View style={styles.generatedMetaRow}>
+                        <Text style={styles.generatedDetails} selectable>
+                          {getModelDisplayName(item.modelId)} • {new Date(item.createdAt).toLocaleTimeString()}
+                        </Text>
+                        <TouchableOpacity
+                          style={styles.downloadButton}
+                          onPress={() => handleDownloadImage(item.imageData, item.prompt)}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="download-outline" size={18} color={palette.accentStrong} />
+                          <Text style={styles.downloadButtonText}>PNG</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   </View>
                 ))
@@ -2223,7 +2288,10 @@ export default function ChatScreen() {
                 activeOpacity={0.85}
               >
                 {isGeneratingImage ? (
-                  <ActivityIndicator color="#FFFFFF" />
+                  <View style={styles.generateButtonLoading}>
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                    <Text style={styles.generateButtonText}>Generating...</Text>
+                  </View>
                 ) : (
                   <Text style={styles.generateButtonText}>Generate</Text>
                 )}
@@ -2232,6 +2300,22 @@ export default function ChatScreen() {
           </View>
         )}
       </KeyboardAvoidingView>
+      
+      {isGeneratingImage && (
+        <Modal
+          visible={isGeneratingImage}
+          transparent={true}
+          animationType="fade"
+        >
+          <View style={styles.imageLoadingOverlay}>
+            <View style={styles.imageLoadingCard}>
+              <ActivityIndicator size="large" color={palette.accentStrong} />
+              <Text style={styles.imageLoadingText}>Creating your image...</Text>
+              <Text style={styles.imageLoadingSubtext}>This may take a moment</Text>
+            </View>
+          </View>
+        </Modal>
+      )}
 
       {/* Model Picker Modal */}
       <Modal
@@ -2981,6 +3065,40 @@ const styles = StyleSheet.create({
     fontFamily: fonts.semibold,
     letterSpacing: 0.4,
   },
+  generateButtonLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  imageLoadingOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(13, 16, 22, 0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  imageLoadingCard: {
+    backgroundColor: palette.surfaceElevated,
+    borderRadius: radii.lg,
+    padding: space.xl,
+    alignItems: 'center',
+    gap: space.md,
+    borderWidth: 1,
+    borderColor: palette.border,
+    minWidth: 280,
+    ...shadow.elevated,
+  },
+  imageLoadingText: {
+    fontSize: 18,
+    color: palette.textPrimary,
+    fontFamily: fonts.semibold,
+    textAlign: 'center',
+  },
+  imageLoadingSubtext: {
+    fontSize: 14,
+    color: palette.textSecondary,
+    fontFamily: fonts.regular,
+    textAlign: 'center',
+  },
   generatedCard: {
     borderRadius: radii.lg,
     overflow: 'hidden',
@@ -2989,14 +3107,45 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceElevated,
     ...shadow.subtle,
   },
+  generatedImageContainer: {
+    width: '100%',
+    backgroundColor: palette.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.md,
+    overflow: 'hidden',
+    minHeight: 200,
+  },
   generatedImage: {
     width: '100%',
-    aspectRatio: 1,
     backgroundColor: palette.surface,
   },
   generatedMeta: {
     padding: space.md,
     gap: space.xs,
+  },
+  generatedMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: space.xs,
+  },
+  downloadButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    borderRadius: radii.pill,
+    backgroundColor: palette.accentSoft,
+    borderWidth: 1,
+    borderColor: palette.accent,
+  },
+  downloadButtonText: {
+    fontSize: 12,
+    color: palette.accentStrong,
+    fontFamily: fonts.semibold,
+    letterSpacing: 0.3,
   },
   generatedPrompt: {
     fontSize: 14,
