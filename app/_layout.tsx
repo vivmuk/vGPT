@@ -1,15 +1,28 @@
 import { Stack } from "expo-router";
-import { Head } from "expo-router";
+import { useEffect } from "react";
+import { Platform } from "react-native";
 
 export default function RootLayout() {
-  return (
-    <>
-      <Head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap" rel="stylesheet" />
-      </Head>
-      <Stack screenOptions={{ headerShown: false }} />
-    </>
-  );
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      // Add Google Fonts for web
+      const preconnect1 = document.createElement('link');
+      preconnect1.rel = 'preconnect';
+      preconnect1.href = 'https://fonts.googleapis.com';
+      document.head.appendChild(preconnect1);
+
+      const preconnect2 = document.createElement('link');
+      preconnect2.rel = 'preconnect';
+      preconnect2.href = 'https://fonts.gstatic.com';
+      preconnect2.crossOrigin = 'anonymous';
+      document.head.appendChild(preconnect2);
+
+      const fontLink = document.createElement('link');
+      fontLink.href = 'https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap';
+      fontLink.rel = 'stylesheet';
+      document.head.appendChild(fontLink);
+    }
+  }, []);
+
+  return <Stack screenOptions={{ headerShown: false }} />;
 }
