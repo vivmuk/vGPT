@@ -12,7 +12,8 @@ import {
   FlatList,
   Linking,
   ScrollView,
-  ActivityIndicator
+  ActivityIndicator,
+  useWindowDimensions
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -248,6 +249,58 @@ const getImageGuidance = (model: VeniceModel | undefined, fallback: number): num
   const cfgScale = getConstraintDefaults(model, 'cfg_scale', undefined);
   const guidanceScale = getConstraintDefaults(model, 'guidance_scale', undefined);
   return cfgScale ?? guidanceScale ?? fallback;
+};
+
+// Get maximum quality values for image generation
+const getMaxQualitySteps = (model: VeniceModel | undefined | null): number | undefined => {
+  if (!model) return undefined;
+  const constraints = model.model_spec?.constraints || {};
+  const stepsConstraint = constraints.steps;
+  if (typeof stepsConstraint === 'number') {
+    return stepsConstraint;
+  }
+  if (stepsConstraint && typeof stepsConstraint === 'object' && typeof stepsConstraint.max === 'number') {
+    return stepsConstraint.max;
+  }
+  return undefined;
+};
+
+const getOptimalGuidanceScale = (model: VeniceModel | undefined | null): number | undefined => {
+  if (!model) return undefined;
+  const constraints = model.model_spec?.constraints || {};
+  
+  // Check cfg_scale first (Venice API standard)
+  const cfgScaleConstraint = constraints.cfg_scale;
+  if (cfgScaleConstraint) {
+    if (typeof cfgScaleConstraint === 'number') {
+      return cfgScaleConstraint;
+    }
+    if (typeof cfgScaleConstraint === 'object') {
+      // Use max if available, otherwise default, otherwise fallback to optimal range
+      if (typeof cfgScaleConstraint.max === 'number') {
+        // For quality, use a value closer to max but not at the extreme (usually 7-9 is optimal)
+        const max = cfgScaleConstraint.max;
+        return Math.min(max, Math.max(7, max * 0.85));
+      }
+      if (typeof cfgScaleConstraint.default === 'number') {
+        return cfgScaleConstraint.default;
+      }
+    }
+  }
+  
+  // Fallback to guidance_scale
+  const guidanceConstraint = constraints.guidance_scale;
+  if (guidanceConstraint) {
+    if (typeof guidanceConstraint === 'number') {
+      return guidanceConstraint;
+    }
+    if (typeof guidanceConstraint === 'object' && typeof guidanceConstraint.max === 'number') {
+      const max = guidanceConstraint.max;
+      return Math.min(max, Math.max(7, max * 0.85));
+    }
+  }
+  
+  return undefined;
 };
 
 interface SuggestedImageSize {
@@ -747,6 +800,7 @@ const resolveUsdPrice = (pricingSection: unknown): number | undefined => {
 
 export default function ChatScreen() {
   const router = useRouter();
+  const windowDimensions = useWindowDimensions();
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -772,7 +826,6 @@ export default function ChatScreen() {
     height: DEFAULT_SETTINGS.imageHeight,
     guidance: DEFAULT_SETTINGS.imageGuidanceScale,
   });
-  const [showAdvancedImageOptions, setShowAdvancedImageOptions] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -1089,7 +1142,16 @@ export default function ChatScreen() {
       return;
     }
 
-    const prompt = imagePrompt.trim();
+    // Enhance prompt with quality instructions
+    let prompt = imagePrompt.trim();
+    const qualityKeywords = ['high quality', 'high resolution', 'detailed', 'sharp', 'professional', 'masterpiece', '4k', '8k', 'ultra detailed'];
+    const hasQualityKeywords = qualityKeywords.some(keyword => prompt.toLowerCase().includes(keyword));
+    
+    if (!hasQualityKeywords) {
+      // Add quality instructions to prompt for better results
+      prompt = `${prompt}, high quality, detailed, sharp focus, professional, masterpiece`;
+    }
+
     setIsGeneratingImage(true);
     setImageError(null);
 
@@ -1108,14 +1170,21 @@ export default function ChatScreen() {
         width,
         height,
         format: 'png', // Use PNG for higher quality
+        hide_watermark: true, // Remove watermark for cleaner images
       };
 
+      // Use maximum quality steps if available, otherwise use user's setting
       if (currentImageModel?.model_spec?.constraints?.steps != null) {
-        payload.steps = clampToConstraint(imageOptions.steps, currentImageModel, 'steps', settings.imageSteps);
+        const maxSteps = getMaxQualitySteps(currentImageModel);
+        const stepsToUse = maxSteps ?? clampToConstraint(imageOptions.steps, currentImageModel, 'steps', settings.imageSteps);
+        payload.steps = stepsToUse;
       }
 
-      // Venice API uses cfg_scale instead of guidance_scale
-      if (currentImageModel?.model_spec?.constraints?.guidance_scale != null || currentImageModel?.model_spec?.constraints?.cfg_scale != null) {
+      // Use optimal guidance scale for quality
+      const optimalGuidance = getOptimalGuidanceScale(currentImageModel);
+      if (optimalGuidance != null) {
+        payload.cfg_scale = optimalGuidance;
+      } else if (currentImageModel?.model_spec?.constraints?.guidance_scale != null || currentImageModel?.model_spec?.constraints?.cfg_scale != null) {
         payload.cfg_scale = clampToConstraint(
           imageOptions.guidance,
           currentImageModel,
@@ -1206,28 +1275,6 @@ export default function ChatScreen() {
     [currentImageModel, settings.imageHeight, settings.imageWidth, syncImageSettings]
   );
 
-  const adjustImageSteps = useCallback(
-    (delta: number) => {
-      if (!currentImageModel) {
-        return;
-      }
-      const next = clampToConstraint(imageOptions.steps + delta, currentImageModel, 'steps', settings.imageSteps);
-      syncImageSettings({ steps: next });
-    },
-    [currentImageModel, imageOptions.steps, settings.imageSteps, syncImageSettings]
-  );
-
-  const adjustImageGuidance = useCallback(
-    (delta: number) => {
-      if (!currentImageModel) {
-        return;
-      }
-      const constraintKey = currentImageModel?.model_spec?.constraints?.cfg_scale != null ? 'cfg_scale' : 'guidance_scale';
-      const next = clampToConstraint(imageOptions.guidance + delta, currentImageModel, constraintKey, settings.imageGuidanceScale);
-      syncImageSettings({ guidance: parseFloat(next.toFixed(1)) });
-    },
-    [currentImageModel, imageOptions.guidance, settings.imageGuidanceScale, syncImageSettings]
-  );
   useEffect(() => {
     if (!currentModel) return;
     const defaultMaxTokens = getModelDefaultMaxTokens(currentModel);
@@ -2152,22 +2199,30 @@ export default function ChatScreen() {
                   </Text>
                 </View>
               ) : (
-                generatedImages.map((item) => (
-                  <View key={item.id} style={styles.generatedCard}>
-                    <View style={styles.generatedImageContainer}>
-                      <Image 
-                        source={{ uri: item.imageData }} 
-                        style={[
-                          styles.generatedImage,
-                          item.width && item.height ? {
-                            aspectRatio: item.width / item.height,
-                            maxHeight: 800,
-                          } : { minHeight: 200 }
-                        ]}
-                        contentFit="contain"
-                        transition={200}
-                      />
-                    </View>
+                generatedImages.map((item) => {
+                  // Calculate responsive image dimensions
+                  const screenWidth = windowDimensions.width;
+                  const screenHeight = windowDimensions.height;
+                  const availableHeight = screenHeight * 0.6; // Use 60% of screen height max
+                  const maxImageHeight = Math.min(availableHeight, screenWidth * 1.2); // Max 1.2x screen width
+                  
+                  return (
+                    <View key={item.id} style={styles.generatedCard}>
+                      <View style={styles.generatedImageContainer}>
+                        <Image 
+                          source={{ uri: item.imageData }} 
+                          style={[
+                            styles.generatedImage,
+                            item.width && item.height ? {
+                              aspectRatio: item.width / item.height,
+                              maxHeight: maxImageHeight,
+                              maxWidth: screenWidth - 32, // Account for padding
+                            } : { minHeight: 200 }
+                          ]}
+                          contentFit="contain"
+                          transition={200}
+                        />
+                      </View>
                     <View style={styles.generatedMeta}>
                       <Text style={styles.generatedPrompt} numberOfLines={2} selectable>
                         {item.prompt}
@@ -2187,7 +2242,8 @@ export default function ChatScreen() {
                       </View>
                     </View>
                   </View>
-                ))
+                  );
+                })
               )}
             </ScrollView>
 
@@ -2203,70 +2259,22 @@ export default function ChatScreen() {
                 <Ionicons name="chevron-down" size={16} color={palette.accentStrong} />
               </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.advancedToggle}
-                onPress={() => setShowAdvancedImageOptions((prev) => !prev)}
-                activeOpacity={0.85}
-              >
-                <View style={styles.advancedToggleLeft}>
-                  <Ionicons name="options-outline" size={18} color={palette.accentStrong} />
-                  <Text style={styles.advancedToggleText}>Advanced options</Text>
-                </View>
-                <Ionicons
-                  name={showAdvancedImageOptions ? 'chevron-up' : 'chevron-down'}
-                  size={18}
-                  color={palette.accentStrong}
-                />
-              </TouchableOpacity>
-
-              {showAdvancedImageOptions && (
-                <View style={styles.advancedOptionsContainer}>
-                  <View style={styles.sizeChipsRow}>
-                    {suggestedImageSizes.map((size) => {
-                      const isActive = imageOptions.width === size.width && imageOptions.height === size.height;
-                      return (
-                        <TouchableOpacity
-                          key={`${size.width}x${size.height}`}
-                          style={[styles.sizeChip, isActive && styles.sizeChipActive]}
-                          onPress={() => handleSelectImageSize(size.width, size.height)}
-                        >
-                          <Text style={[styles.sizeChipText, isActive && styles.sizeChipTextActive]}>
-                            {size.label}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-
-                  <View style={styles.imageControlsRow}>
-                    <View style={styles.controlGroup}>
-                      <Text style={styles.controlLabel}>Steps</Text>
-                      <View style={styles.controlButtons}>
-                        <TouchableOpacity style={styles.controlButton} onPress={() => adjustImageSteps(-1)}>
-                          <Ionicons name="remove" size={18} color={palette.textPrimary} />
-                        </TouchableOpacity>
-                        <Text style={styles.controlValue}>{imageOptions.steps}</Text>
-                        <TouchableOpacity style={styles.controlButton} onPress={() => adjustImageSteps(1)}>
-                          <Ionicons name="add" size={18} color={palette.textPrimary} />
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-
-                    <View style={styles.controlGroup}>
-                      <Text style={styles.controlLabel}>Guidance</Text>
-                      <View style={styles.controlButtons}>
-                        <TouchableOpacity style={styles.controlButton} onPress={() => adjustImageGuidance(-0.5)}>
-                          <Ionicons name="remove" size={18} color={palette.textPrimary} />
-                        </TouchableOpacity>
-                        <Text style={styles.controlValue}>{imageOptions.guidance.toFixed(1)}</Text>
-                        <TouchableOpacity style={styles.controlButton} onPress={() => adjustImageGuidance(0.5)}>
-                          <Ionicons name="add" size={18} color={palette.textPrimary} />
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  </View>
-                </View>
-              )}
+              <View style={styles.sizeChipsRow}>
+                {suggestedImageSizes.map((size) => {
+                  const isActive = imageOptions.width === size.width && imageOptions.height === size.height;
+                  return (
+                    <TouchableOpacity
+                      key={`${size.width}x${size.height}`}
+                      style={[styles.sizeChip, isActive && styles.sizeChipActive]}
+                      onPress={() => handleSelectImageSize(size.width, size.height)}
+                    >
+                      <Text style={[styles.sizeChipText, isActive && styles.sizeChipTextActive]}>
+                        {size.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
 
               <View style={styles.imagePromptField}>
                 <TextInput
@@ -2935,35 +2943,6 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     fontFamily: fonts.medium,
   },
-  advancedToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: palette.surfaceElevated,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: palette.border,
-    paddingHorizontal: space.lg,
-    paddingVertical: space.sm,
-  },
-  advancedToggleLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-  },
-  advancedToggleText: {
-    fontSize: 14,
-    color: palette.textPrimary,
-    fontFamily: fonts.medium,
-  },
-  advancedOptionsContainer: {
-    gap: space.md,
-    backgroundColor: palette.surfaceElevated,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: palette.border,
-    padding: space.md,
-  },
   sizeChipsRow: {
     flexDirection: 'row',
     gap: space.sm,
@@ -2988,50 +2967,6 @@ const styles = StyleSheet.create({
   },
   sizeChipTextActive: {
     color: palette.accentStrong,
-  },
-  imageControlsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: space.md,
-  },
-  controlGroup: {
-    flex: 1,
-    backgroundColor: palette.surfaceElevated,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: palette.border,
-    padding: space.md,
-    gap: space.sm,
-  },
-  controlLabel: {
-    fontSize: 12,
-    color: palette.textSecondary,
-    fontFamily: fonts.medium,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  controlButtons: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: space.sm,
-  },
-  controlButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: palette.surfaceActive,
-    borderWidth: 1,
-    borderColor: palette.border,
-  },
-  controlValue: {
-    flex: 1,
-    textAlign: 'center',
-    fontSize: 14,
-    color: palette.textPrimary,
-    fontFamily: fonts.semibold,
   },
   imagePromptField: {
     borderRadius: radii.lg,
@@ -3115,10 +3050,12 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     overflow: 'hidden',
     minHeight: 200,
+    maxWidth: '100%',
   },
   generatedImage: {
     width: '100%',
     backgroundColor: palette.surface,
+    resizeMode: 'contain',
   },
   generatedMeta: {
     padding: space.md,
