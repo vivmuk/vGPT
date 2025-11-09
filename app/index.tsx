@@ -244,8 +244,10 @@ const getImageSteps = (model: VeniceModel | undefined, fallback: number): number
 };
 
 const getImageGuidance = (model: VeniceModel | undefined, fallback: number): number => {
-  const defaultValue = getConstraintDefaults(model, 'guidance_scale', fallback);
-  return defaultValue ?? fallback;
+  // Venice API uses cfg_scale, but some models might still use guidance_scale
+  const cfgScale = getConstraintDefaults(model, 'cfg_scale', undefined);
+  const guidanceScale = getConstraintDefaults(model, 'guidance_scale', undefined);
+  return cfgScale ?? guidanceScale ?? fallback;
 };
 
 interface SuggestedImageSize {
@@ -717,6 +719,7 @@ export default function ChatScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [models, setModels] = useState<VeniceModel[]>([]);
+  const [imageModelsList, setImageModelsList] = useState<VeniceModel[]>([]);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [activeTab, setActiveTab] = useState<'chat' | 'image'>('chat');
@@ -760,8 +763,20 @@ export default function ChatScreen() {
     };
   }, []);
 
-  const textModels = useMemo(() => models.filter((model) => !isImageModel(model)), [models]);
-  const imageModels = useMemo(() => models.filter((model) => isImageModel(model)), [models]);
+  const textModels = useMemo(() => models.filter((model) => {
+    // Exclude image models - check both API type and our detection
+    const modelType = model.type?.toLowerCase() ?? '';
+    return modelType !== 'image' && !isImageModel(model);
+  }), [models]);
+  
+  // Use API-filtered image models if available, otherwise fall back to detected
+  const imageModels = useMemo(() => {
+    if (imageModelsList.length > 0) {
+      return imageModelsList;
+    }
+    // Fallback to client-side detection
+    return models.filter((model) => isImageModel(model));
+  }, [imageModelsList, models]);
 
   const updateSettings = useCallback((newSettings: Partial<AppSettings>) => {
     setSettings((prev) => {
@@ -824,7 +839,12 @@ export default function ChatScreen() {
       steps: clampToConstraint(prev.steps ?? settings.imageSteps, currentImageModel, 'steps', settings.imageSteps),
       width: clampToConstraint(prev.width ?? settings.imageWidth, currentImageModel, 'width', settings.imageWidth),
       height: clampToConstraint(prev.height ?? settings.imageHeight, currentImageModel, 'height', settings.imageHeight),
-      guidance: clampToConstraint(prev.guidance ?? settings.imageGuidanceScale, currentImageModel, 'guidance_scale', settings.imageGuidanceScale),
+      guidance: clampToConstraint(
+        prev.guidance ?? settings.imageGuidanceScale,
+        currentImageModel,
+        currentImageModel?.model_spec?.constraints?.cfg_scale != null ? 'cfg_scale' : 'guidance_scale',
+        settings.imageGuidanceScale
+      ),
     }));
   }, [currentImageModel, settings.imageSteps, settings.imageWidth, settings.imageHeight, settings.imageGuidanceScale]);
 
@@ -844,6 +864,7 @@ export default function ChatScreen() {
   const loadModels = useCallback(async () => {
     setIsLoadingModels(true);
     try {
+      // Load all models (text and image) - API supports ?type=all or no type parameter
       const response = await fetch(VENICE_MODELS_ENDPOINT, {
         method: 'GET',
         headers: {
@@ -863,19 +884,34 @@ export default function ChatScreen() {
         ? data.models
         : [];
 
-      // Debug: Log image models
-      const detectedImageModels = incomingModels.filter((model) => isImageModel(model));
-      console.log(`Loaded ${incomingModels.length} total models, ${detectedImageModels.length} image models`);
-      if (detectedImageModels.length > 0) {
-        console.log('Image models:', detectedImageModels.map(m => ({ id: m.id, name: m.model_spec?.name, type: m.type })));
+      // Also load image models separately using type filter for reliability
+      const imageResponse = await fetch(`${VENICE_MODELS_ENDPOINT}?type=image`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${VENICE_API_KEY}`,
+        },
+      });
+
+      let imageModelsFromAPI: VeniceModel[] = [];
+      if (imageResponse.ok) {
+        const imageData = await imageResponse.json();
+        imageModelsFromAPI = Array.isArray(imageData?.data)
+          ? imageData.data
+          : Array.isArray(imageData?.models)
+          ? imageData.models
+          : [];
+      }
+
+      // Store API-filtered image models separately
+      if (imageModelsFromAPI.length > 0) {
+        setImageModelsList(imageModelsFromAPI);
+        console.log(`Loaded ${imageModelsFromAPI.length} image models from API filter`);
+        console.log('Image models:', imageModelsFromAPI.map(m => ({ id: m.id, name: m.model_spec?.name, type: m.type })));
       } else {
-        console.log('No image models detected. Sample models:', incomingModels.slice(0, 3).map(m => ({
-          id: m.id,
-          name: m.model_spec?.name,
-          type: m.type,
-          capabilities: m.model_spec?.capabilities,
-          pricing: m.model_spec?.pricing
-        })));
+        // Fall back to client-side detection if API filter didn't work
+        const detected = incomingModels.filter((model) => isImageModel(model));
+        setImageModelsList(detected);
+        console.log(`Fell back to client-side detection: ${detected.length} image models`);
       }
 
       setModels(incomingModels);
@@ -1001,11 +1037,12 @@ export default function ChatScreen() {
         payload.steps = clampToConstraint(imageOptions.steps, currentImageModel, 'steps', settings.imageSteps);
       }
 
-      if (currentImageModel?.model_spec?.constraints?.guidance_scale != null) {
-        payload.guidance_scale = clampToConstraint(
+      // Venice API uses cfg_scale instead of guidance_scale
+      if (currentImageModel?.model_spec?.constraints?.guidance_scale != null || currentImageModel?.model_spec?.constraints?.cfg_scale != null) {
+        payload.cfg_scale = clampToConstraint(
           imageOptions.guidance,
           currentImageModel,
-          'guidance_scale',
+          'cfg_scale',
           settings.imageGuidanceScale
         );
       }
@@ -1026,59 +1063,29 @@ export default function ChatScreen() {
 
       const data = await response.json();
       
-      // Handle different response formats from Venice API
-      const imagesArray = Array.isArray(data?.data)
-        ? data.data
-        : Array.isArray(data?.images)
-        ? data.images
-        : Array.isArray(data?.data?.images)
-        ? data.data.images
-        : Array.isArray(data?.outputs)
-        ? data.outputs
-        : null;
-
-      const firstImage = imagesArray?.[0] || data?.data || data?.image || data;
+      // Venice API response format: { id, images: [base64_string], request, timing }
+      // images is an array of base64-encoded strings
+      const imagesArray = data?.images;
       
-      // Extract base64 or URL from response
-      const base64 =
-        firstImage?.b64_json ||
-        firstImage?.b64 ||
-        firstImage?.image_base64 ||
-        firstImage?.base64 ||
-        firstImage?.image ||
-        data?.b64_json ||
-        data?.b64 ||
-        data?.image_base64 ||
-        data?.base64 ||
-        data?.image;
-      
-      const imageUrl =
-        firstImage?.url ||
-        firstImage?.image_url ||
-        firstImage?.imageUrl ||
-        firstImage?.signed_url ||
-        firstImage?.signedUrl ||
-        data?.url ||
-        data?.image_url ||
-        data?.imageUrl ||
-        data?.signed_url ||
-        data?.signedUrl;
-
-      if (!base64 && !imageUrl) {
+      if (!imagesArray || !Array.isArray(imagesArray) || imagesArray.length === 0) {
         console.error('Image response structure:', JSON.stringify(data, null, 2));
-        throw new Error('Image response did not include content.');
+        throw new Error('Image response did not include images array.');
       }
 
-      const mimeType =
-        firstImage?.mime_type ||
-        firstImage?.mimeType ||
-        data?.mime_type ||
-        data?.mimeType ||
-        (typeof firstImage?.format === 'string' ? `image/${firstImage.format}` : null) ||
-        (typeof data?.format === 'string' ? `image/${data.format}` : null) ||
-        'image/webp';
+      // Get the first image (base64 string)
+      const base64String = imagesArray[0];
+      
+      if (!base64String || typeof base64String !== 'string') {
+        console.error('Invalid image data in response:', imagesArray[0]);
+        throw new Error('Image data is not a valid base64 string.');
+      }
 
-      const imageData = base64 ? `data:${mimeType};base64,${base64}` : imageUrl;
+      // Determine mime type based on format
+      const format = payload.format || 'webp';
+      const mimeType = `image/${format}`;
+      
+      // Create data URL
+      const imageData = `data:${mimeType};base64,${base64String}`;
       const generated: GeneratedImage = {
         id: `${Date.now()}`,
         prompt,
@@ -1128,7 +1135,8 @@ export default function ChatScreen() {
       if (!currentImageModel) {
         return;
       }
-      const next = clampToConstraint(imageOptions.guidance + delta, currentImageModel, 'guidance_scale', settings.imageGuidanceScale);
+      const constraintKey = currentImageModel?.model_spec?.constraints?.cfg_scale != null ? 'cfg_scale' : 'guidance_scale';
+      const next = clampToConstraint(imageOptions.guidance + delta, currentImageModel, constraintKey, settings.imageGuidanceScale);
       syncImageSettings({ guidance: parseFloat(next.toFixed(1)) });
     },
     [currentImageModel, imageOptions.guidance, settings.imageGuidanceScale, syncImageSettings]
