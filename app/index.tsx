@@ -258,23 +258,55 @@ interface SuggestedImageSize {
 
 const buildSuggestedImageSizes = (model: VeniceModel | undefined, settings: AppSettings): SuggestedImageSize[] => {
   const divisor = model?.model_spec?.constraints?.widthHeightDivisor || 8;
-  const baseWidth = clampToConstraint(settings.imageWidth, model, 'width', settings.imageWidth);
-  const baseHeight = clampToConstraint(settings.imageHeight, model, 'height', settings.imageHeight);
-
+  const maxDimension = 1280; // Venice API maximum
+  
   const normalize = (value: number) => Math.round(value / divisor) * divisor;
+  const clampMax = (value: number) => Math.min(value, maxDimension);
 
-  const square = normalize(Math.min(baseWidth, baseHeight));
-  const landscape = normalize(Math.max(baseWidth, Math.round((baseHeight * 4) / 3)));
-  const portrait = normalize(Math.max(baseHeight, Math.round((baseWidth * 4) / 3)));
+  // Start with safe base dimensions
+  const baseWidth = Math.min(clampToConstraint(settings.imageWidth, model, 'width', 1024), maxDimension);
+  const baseHeight = Math.min(clampToConstraint(settings.imageHeight, model, 'height', 1024), maxDimension);
+
+  // Square: use the smaller dimension, capped at 1280
+  const square = normalize(clampMax(Math.min(baseWidth, baseHeight, 1024)));
+
+  // Portrait: taller than wide, ensure width <= 1280 and height <= 1280
+  // Calculate height first, then derive width to maintain aspect ratio
+  let portraitHeight = normalize(clampMax(Math.min(1024, Math.max(baseHeight, Math.round((baseWidth * 4) / 3)))));
+  let portraitWidth = normalize(clampMax(Math.round(portraitHeight * 0.75)));
+  
+  // If width exceeds limit, recalculate from width constraint
+  if (portraitWidth > maxDimension) {
+    portraitWidth = normalize(maxDimension);
+    portraitHeight = normalize(clampMax(Math.round(portraitWidth / 0.75)));
+  }
+
+  // Landscape: wider than tall, ensure width <= 1280 and height <= 1280
+  // Calculate width first, then derive height to maintain aspect ratio
+  let landscapeWidth = normalize(clampMax(Math.min(1024, Math.max(baseWidth, Math.round((baseHeight * 4) / 3)))));
+  let landscapeHeight = normalize(clampMax(Math.round(landscapeWidth * 0.75)));
+  
+  // If width exceeds limit, recalculate from width constraint
+  if (landscapeWidth > maxDimension) {
+    landscapeWidth = normalize(maxDimension);
+    landscapeHeight = normalize(clampMax(Math.round(landscapeWidth * 0.75)));
+  }
 
   const sizes: SuggestedImageSize[] = [
     { label: 'Square', width: square, height: square },
-    { label: 'Portrait', width: normalize(Math.round(square * 0.75)), height: portrait },
-    { label: 'Landscape', width: landscape, height: normalize(Math.round(square * 0.75)) },
+    { label: 'Portrait', width: portraitWidth, height: portraitHeight },
+    { label: 'Landscape', width: landscapeWidth, height: landscapeHeight },
   ];
 
+  // Ensure all sizes are within limits
+  const validatedSizes = sizes.map(size => ({
+    ...size,
+    width: Math.min(size.width, maxDimension),
+    height: Math.min(size.height, maxDimension),
+  }));
+
   const unique: SuggestedImageSize[] = [];
-  for (const size of sizes) {
+  for (const size of validatedSizes) {
     if (!unique.some((entry) => entry.width === size.width && entry.height === size.height)) {
       unique.push(size);
     }
@@ -1022,8 +1054,13 @@ export default function ChatScreen() {
     setImageError(null);
 
     try {
-      const width = clampToConstraint(imageOptions.width, currentImageModel, 'width', settings.imageWidth);
-      const height = clampToConstraint(imageOptions.height, currentImageModel, 'height', settings.imageHeight);
+      // Ensure dimensions don't exceed Venice API maximum of 1280
+      const maxDimension = 1280;
+      const constrainedWidth = Math.min(imageOptions.width, maxDimension);
+      const constrainedHeight = Math.min(imageOptions.height, maxDimension);
+      
+      const width = Math.min(clampToConstraint(constrainedWidth, currentImageModel, 'width', settings.imageWidth), maxDimension);
+      const height = Math.min(clampToConstraint(constrainedHeight, currentImageModel, 'height', settings.imageHeight), maxDimension);
 
       const payload: Record<string, any> = {
         model: currentImageModel.id,
@@ -1112,9 +1149,19 @@ export default function ChatScreen() {
         return;
       }
 
-      const nextWidth = clampToConstraint(width, currentImageModel, 'width', settings.imageWidth);
-      const nextHeight = clampToConstraint(height, currentImageModel, 'height', settings.imageHeight);
-      syncImageSettings({ width: nextWidth, height: nextHeight });
+      // Ensure dimensions don't exceed Venice API maximum of 1280
+      const maxDimension = 1280;
+      const constrainedWidth = Math.min(width, maxDimension);
+      const constrainedHeight = Math.min(height, maxDimension);
+      
+      const nextWidth = clampToConstraint(constrainedWidth, currentImageModel, 'width', settings.imageWidth);
+      const nextHeight = clampToConstraint(constrainedHeight, currentImageModel, 'height', settings.imageHeight);
+      
+      // Final safety check to ensure we never exceed 1280
+      const finalWidth = Math.min(nextWidth, maxDimension);
+      const finalHeight = Math.min(nextHeight, maxDimension);
+      
+      syncImageSettings({ width: finalWidth, height: finalHeight });
     },
     [currentImageModel, settings.imageHeight, settings.imageWidth, syncImageSettings]
   );
@@ -1886,8 +1933,9 @@ export default function ChatScreen() {
   };
 
   return (
+    <View style={Platform.OS === 'web' ? styles.webContainer : undefined}>
     <SafeAreaView style={styles.container}>
-      <StatusBar style="light" />
+        <StatusBar style="light" />
       <KeyboardAvoidingView 
         style={styles.container} 
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -2185,7 +2233,6 @@ export default function ChatScreen() {
         )}
       </KeyboardAvoidingView>
 
-
       {/* Model Picker Modal */}
       <Modal
         visible={showModelPicker}
@@ -2197,9 +2244,9 @@ export default function ChatScreen() {
             <TouchableOpacity onPress={() => setShowModelPicker(false)}>
               <Text style={styles.modalCancelText}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>
-              {activeTab === 'chat' ? 'Select Chat Model' : 'Select Image Model'}
-            </Text>
+              <Text style={styles.modalTitle}>
+                {activeTab === 'chat' ? 'Select Chat Model' : 'Select Image Model'}
+              </Text>
             <View style={styles.headerSpacer} />
           </View>
           
@@ -2209,24 +2256,25 @@ export default function ChatScreen() {
             </View>
           ) : (
             <FlatList
-              data={activeTab === 'chat' ? textModels : imageModels}
-              renderItem={renderModelItem}
-              keyExtractor={(item: VeniceModel) => item.id}
-              contentContainerStyle={styles.modelList}
-              ListEmptyComponent={(
-                <View style={styles.loadingContainer}>
-                  <Text style={styles.emptyModelsText}>
-                    {activeTab === 'chat'
-                      ? 'No chat models available.'
-                      : 'No image models available.'}
+                data={activeTab === 'chat' ? textModels : imageModels}
+                renderItem={renderModelItem}
+                keyExtractor={(item: VeniceModel) => item.id}
+                contentContainerStyle={styles.modelList}
+                ListEmptyComponent={(
+                  <View style={styles.loadingContainer}>
+                    <Text style={styles.emptyModelsText}>
+                      {activeTab === 'chat'
+                        ? 'No chat models available.'
+                        : 'No image models available.'}
                     </Text>
                     </View>
-              )}
+                )}
             />
           )}
         </SafeAreaView>
       </Modal>
     </SafeAreaView>
+    </View>
   );
 }
 
@@ -2237,9 +2285,22 @@ const fonts = theme.fonts;
 const shadow = theme.shadows;
 
 const styles = StyleSheet.create({
+  webContainer: {
+    flex: 1,
+    width: '100%',
+    alignItems: 'center',
+    backgroundColor: palette.backgroundMuted,
+    ...(Platform.OS === 'web' && {
+      minHeight: '100vh',
+    }),
+  },
   container: {
     flex: 1,
     backgroundColor: palette.background,
+    ...(Platform.OS === 'web' && {
+      maxWidth: 1200,
+      width: '100%',
+    }),
   },
   loadingContainer: {
     flex: 1,
