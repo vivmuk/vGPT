@@ -2224,7 +2224,7 @@ export default function ChatScreen() {
         </View>
 
         {activeTab === 'chat' ? (
-          <>
+          <View style={{ flex: 1 }}>
             <FlatList
               ref={flatListRef}
               data={messages}
@@ -2325,7 +2325,7 @@ export default function ChatScreen() {
                 </View>
               </View>
             </View>
-          </>
+          </View>
         ) : (
           <View style={styles.imageTabContainer}>
             <ScrollView
