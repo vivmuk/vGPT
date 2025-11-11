@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback, memo } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TextInput, 
-  TouchableOpacity, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
   Alert,
@@ -13,12 +13,13 @@ import {
   Linking,
   ScrollView,
   ActivityIndicator,
-  useWindowDimensions
+  useWindowDimensions,
+  LayoutChangeEvent,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -169,6 +170,12 @@ const isImageModel = (model?: VeniceModel | null): boolean => {
 };
 
 const mistralMatcher = /mistral/i;
+
+const palette = theme.colors;
+const space = theme.spacing;
+const radii = theme.radius;
+const fonts = theme.fonts;
+const shadow = theme.shadows;
 
 const findMistralModel = (models: VeniceModel[]): VeniceModel | undefined => {
   return models.find((model) => mistralMatcher.test(model.id) || mistralMatcher.test(model.model_spec?.name ?? ''));
@@ -801,6 +808,11 @@ const resolveUsdPrice = (pricingSection: unknown): number | undefined => {
 export default function ChatScreen() {
   const router = useRouter();
   const windowDimensions = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const isCompactWidth = windowDimensions.width < 768;
+  const isUltraCompactWidth = windowDimensions.width < 380;
+  const [topChromeHeight, setTopChromeHeight] = useState(0);
+  const [composerHeight, setComposerHeight] = useState(0);
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -818,6 +830,18 @@ export default function ChatScreen() {
   const previousChatModelRef = useRef<string | null>(null);
   const [attachedImages, setAttachedImages] = useState<{ uri: string; mimeType: string }[]>([]);
   const activeRequestControllerRef = useRef<AbortController | null>(null);
+
+  const keyboardVerticalOffset = useMemo(() => {
+    if (Platform.OS === 'ios') {
+      return topChromeHeight;
+    }
+
+    if (topChromeHeight === 0) {
+      return 0;
+    }
+
+    return Math.max(topChromeHeight - space.md, 0);
+  }, [topChromeHeight]);
 
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [imageOptions, setImageOptions] = useState({
@@ -869,6 +893,14 @@ export default function ChatScreen() {
       void persistSettings(updatedSettings);
       return updatedSettings;
     });
+  }, []);
+
+  const handleChromeLayout = useCallback((event: LayoutChangeEvent) => {
+    setTopChromeHeight(event.nativeEvent.layout.height);
+  }, []);
+
+  const handleComposerLayout = useCallback((event: LayoutChangeEvent) => {
+    setComposerHeight(event.nativeEvent.layout.height);
   }, []);
 
   useEffect(() => {
@@ -2019,83 +2051,192 @@ export default function ChatScreen() {
     return <Image source={{ uri }} style={styles.attachmentImage} contentFit="cover" />;
   };
 
+  const composerBottomPadding = useMemo(
+    () => Math.max(space.lg, insets.bottom + (isCompactWidth ? space.md : space.lg)),
+    [insets.bottom, isCompactWidth]
+  );
+
+  const headerStyle = useMemo(
+    () => [styles.header, isCompactWidth && styles.headerCompact, isUltraCompactWidth && styles.headerUltraCompact],
+    [isCompactWidth, isUltraCompactWidth]
+  );
+
+  const headerContentStyle = useMemo(
+    () => [styles.headerContent, isCompactWidth && styles.headerContentCompact],
+    [isCompactWidth]
+  );
+
+  const headerRightStyle = useMemo(
+    () => [styles.headerRight, isCompactWidth && styles.headerRightCompact],
+    [isCompactWidth]
+  );
+
+  const logoTextStyle = useMemo(
+    () => [styles.logoText, isCompactWidth && styles.logoTextCompact],
+    [isCompactWidth]
+  );
+
+  const modelSelectorStyle = useMemo(
+    () => [styles.modelSelector, isCompactWidth && styles.modelSelectorCompact],
+    [isCompactWidth]
+  );
+
+  const modelTextStyle = useMemo(
+    () => [styles.modelText, isCompactWidth && styles.modelTextCompact],
+    [isCompactWidth]
+  );
+
+  const tabSwitcherRowStyle = useMemo(
+    () => [styles.tabSwitcherRow, isCompactWidth && styles.tabSwitcherRowCompact],
+    [isCompactWidth]
+  );
+
+  const composerContainerStyle = useMemo(
+    () => [
+      styles.composerContainer,
+      isCompactWidth && styles.composerContainerCompact,
+      isUltraCompactWidth && styles.composerContainerUltraCompact,
+      { paddingBottom: composerBottomPadding },
+    ],
+    [composerBottomPadding, isCompactWidth, isUltraCompactWidth]
+  );
+
+  const composerShellStyle = useMemo(
+    () => [styles.composerShell, isCompactWidth && styles.composerShellCompact],
+    [isCompactWidth]
+  );
+
+  const composerInnerStyle = useMemo(
+    () => [styles.composerInner, isCompactWidth && styles.composerInnerCompact],
+    [isCompactWidth]
+  );
+
+  const composerActionsStyle = useMemo(
+    () => [styles.composerActions, isCompactWidth && styles.composerActionsCompact],
+    [isCompactWidth]
+  );
+
+  const attachmentsBarStyle = useMemo(
+    () => [styles.attachmentsBar, isCompactWidth && styles.attachmentsBarCompact],
+    [isCompactWidth]
+  );
+
+  const attachmentsContentStyle = useMemo(
+    () => [styles.attachmentsContent, isCompactWidth && styles.attachmentsContentCompact],
+    [isCompactWidth]
+  );
+
+  const messagesContentStyle = useMemo(
+    () => [
+      styles.messagesContent,
+      isCompactWidth && styles.messagesContentCompact,
+      { paddingBottom: Math.max(composerBottomPadding + space.md, composerHeight + composerBottomPadding) },
+    ],
+    [composerBottomPadding, composerHeight, isCompactWidth]
+  );
+
+  const imageEmptyStateStyle = useMemo(
+    () => [styles.imageEmptyState, isCompactWidth && styles.imageEmptyStateCompact],
+    [isCompactWidth]
+  );
+
+  const imageResultsStyle = useMemo(
+    () => [styles.imageResults, isCompactWidth && styles.imageResultsCompact, { paddingBottom: composerBottomPadding }],
+    [composerBottomPadding, isCompactWidth]
+  );
+
   return (
     <View style={Platform.OS === 'web' ? styles.webContainer : undefined}>
-    <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container}>
         <StatusBar style="light" />
-      <KeyboardAvoidingView 
-        style={styles.container} 
+      <KeyboardAvoidingView
+        style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={keyboardVerticalOffset}
       >
-        <BlurView intensity={65} tint="dark" style={styles.header}>
-          <View style={styles.headerContent}>
-          <View style={styles.headerLeft}>
-            <View style={styles.logoContainer}>
-              <Text style={styles.logoIcon}>✨</Text>
-              <Text style={styles.logoText}>vGPT</Text>
+        <View style={styles.chromeContainer} onLayout={handleChromeLayout}>
+          <BlurView intensity={65} tint="dark" style={headerStyle}>
+            <View style={headerContentStyle}>
+              <View style={styles.headerLeft}>
+                <View style={styles.logoContainer}>
+                  <Text style={styles.logoIcon}>✨</Text>
+                  <Text style={logoTextStyle}>vGPT</Text>
+                </View>
+              </View>
+
+              <View style={headerRightStyle}>
+                <TouchableOpacity
+                  style={modelSelectorStyle}
+                  onPress={() => setShowModelPicker(true)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={modelTextStyle} numberOfLines={1}>
+                    {activeTab === 'chat'
+                      ? getModelDisplayName(settings.model)
+                      : getModelDisplayName(settings.imageModel)}
+                  </Text>
+                  <Ionicons name="chevron-down" size={16} color={palette.accentStrong} />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.settingsButton, isCompactWidth && styles.headerActionButtonCompact]}
+                  onPress={() => router.push('/settings')}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="settings" size={20} color={palette.accentStrong} />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.newChatButton, isCompactWidth && styles.headerActionButtonCompact]}
+                  onPress={activeTab === 'chat' ? handleNewChat : () => setGeneratedImages([])}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name={activeTab === 'chat' ? 'add' : 'refresh'} size={24} color={palette.accentStrong} />
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
-          
-          <View style={styles.headerRight}>
-            <TouchableOpacity 
-              style={styles.modelSelector}
-              onPress={() => setShowModelPicker(true)}
-              activeOpacity={0.8}
+          </BlurView>
+
+          <View style={tabSwitcherRowStyle}>
+            <TouchableOpacity
+              style={[styles.tabButton, isCompactWidth && styles.tabButtonCompact, activeTab === 'chat' && styles.tabButtonActive]}
+              onPress={() => setActiveTab('chat')}
+              activeOpacity={0.9}
             >
-                <Text style={styles.modelText} numberOfLines={1}>
-                  {activeTab === 'chat'
-                    ? getModelDisplayName(settings.model)
-                    : getModelDisplayName(settings.imageModel)}
+              <Text
+                style={[styles.tabButtonText, isCompactWidth && styles.tabButtonTextCompact, activeTab === 'chat' && styles.tabButtonTextActive]}
+              >
+                Chat
               </Text>
-                <Ionicons name="chevron-down" size={16} color={palette.accentStrong} />
             </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={styles.settingsButton}
-              onPress={() => router.push('/settings')}
-              activeOpacity={0.8}
+            <TouchableOpacity
+              style={[styles.tabButton, isCompactWidth && styles.tabButtonCompact, activeTab === 'image' && styles.tabButtonActive]}
+              onPress={() => setActiveTab('image')}
+              activeOpacity={0.9}
             >
-                <Ionicons name="settings" size={20} color={palette.accentStrong} />
+              <Text
+                style={[styles.tabButtonText, isCompactWidth && styles.tabButtonTextCompact, activeTab === 'image' && styles.tabButtonTextActive]}
+              >
+                Images
+              </Text>
             </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={styles.newChatButton}
-                onPress={activeTab === 'chat' ? handleNewChat : () => setGeneratedImages([])}
-              activeOpacity={0.8}
-            >
-                <Ionicons name={activeTab === 'chat' ? 'add' : 'refresh'} size={24} color={palette.accentStrong} />
-            </TouchableOpacity>
-            </View>
           </View>
-        </BlurView>
-
-        <View style={styles.tabSwitcherRow}>
-          <TouchableOpacity
-            style={[styles.tabButton, activeTab === 'chat' && styles.tabButtonActive]}
-            onPress={() => setActiveTab('chat')}
-            activeOpacity={0.9}
-          >
-            <Text style={[styles.tabButtonText, activeTab === 'chat' && styles.tabButtonTextActive]}>Chat</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.tabButton, activeTab === 'image' && styles.tabButtonActive]}
-            onPress={() => setActiveTab('image')}
-            activeOpacity={0.9}
-          >
-            <Text style={[styles.tabButtonText, activeTab === 'image' && styles.tabButtonTextActive]}>Images</Text>
-          </TouchableOpacity>
         </View>
 
         {activeTab === 'chat' ? (
           <>
-        <FlatList
-          ref={flatListRef}
-          data={messages}
-          style={styles.messagesContainer}
+            <FlatList
+              ref={flatListRef}
+              data={messages}
+              style={styles.messagesContainer}
               keyExtractor={keyExtractor}
-          renderItem={({ item }: { item: Message }) => <MessageItem item={item} />}
-          contentContainerStyle={messages.length === 0 ? styles.emptyState : styles.messagesContent}
-          ListEmptyComponent={
+              renderItem={({ item }: { item: Message }) => <MessageItem item={item} />}
+              contentContainerStyle={
+                messages.length === 0
+                  ? [styles.emptyState, isCompactWidth && styles.emptyStateCompact]
+                  : messagesContentStyle
+              }
+              ListEmptyComponent={
             <View style={styles.welcomeContainer}>
               <View style={styles.welcomeIconContainer}>
                 <Text style={styles.welcomeIcon}>✨</Text>
@@ -2106,8 +2247,8 @@ export default function ChatScreen() {
                 Send a message to start the conversation with {getModelDisplayName(settings.model)}
               </Text>
             </View>
-          }
-          ListFooterComponent={
+              }
+              ListFooterComponent={
             isLoading ? (
               <View style={styles.loadingMessage}>
                 <View style={[styles.assistantBubble, { alignSelf: 'flex-start' }]}>
@@ -2115,63 +2256,73 @@ export default function ChatScreen() {
                 </View>
               </View>
             ) : null
-          }
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
+              }
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+              contentInsetAdjustmentBehavior="always"
               removeClippedSubviews={Platform.OS !== 'web'}
-          initialNumToRender={12}
-          maxToRenderPerBatch={12}
-          windowSize={5}
+              initialNumToRender={12}
+              maxToRenderPerBatch={12}
+              windowSize={5}
               maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-        />
+              onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+            />
 
-            <View style={styles.composerContainer}>
-          {attachedImages.length > 0 && (
+            <View style={composerContainerStyle} onLayout={handleComposerLayout}>
+              {attachedImages.length > 0 && (
                 <ScrollView
                   horizontal
-                  style={styles.attachmentsBar}
-                  contentContainerStyle={styles.attachmentsContent}
+                  style={attachmentsBarStyle}
+                  contentContainerStyle={attachmentsContentStyle}
                   showsHorizontalScrollIndicator={false}
                 >
-              {attachedImages.map((img: { uri: string; mimeType: string }) => (
-                <View key={img.uri} style={styles.attachmentItem}>
-                  <ImagePreview uri={img.uri} />
-                  <TouchableOpacity style={styles.removeAttachmentBtn} onPress={() => removeAttachedImage(img.uri)}>
-                    <Ionicons name="close" size={14} color="#fff" />
-                  </TouchableOpacity>
-                </View>
-              ))}
+                  {attachedImages.map((img: { uri: string; mimeType: string }) => (
+                    <View key={img.uri} style={styles.attachmentItem}>
+                      <ImagePreview uri={img.uri} />
+                      <TouchableOpacity style={styles.removeAttachmentBtn} onPress={() => removeAttachedImage(img.uri)}>
+                        <Ionicons name="close" size={14} color="#fff" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
                 </ScrollView>
               )}
-              <View style={styles.composerShell}>
-                <View style={styles.composerInner}>
-            <TextInput
-              style={styles.textInput}
+              <View style={composerShellStyle}>
+                <View style={composerInnerStyle}>
+                  <TextInput
+                    style={styles.textInput}
                     placeholder="Message the AI..."
                     placeholderTextColor={palette.textMuted}
-              value={message}
-              onChangeText={setMessage}
-              multiline
-              maxLength={4000}
-              editable={!isLoading}
-              autoCorrect
-              autoCapitalize="sentences"
-            />
+                    value={message}
+                    onChangeText={setMessage}
+                    multiline
+                    maxLength={4000}
+                    editable={!isLoading}
+                    autoCorrect
+                    autoCapitalize="sentences"
+                  />
                 </View>
-                <View style={styles.composerActions}>
-                  <TouchableOpacity onPress={pickImageFromLibrary} style={styles.iconButton} activeOpacity={0.8}>
+                <View style={composerActionsStyle}>
+                  <TouchableOpacity
+                    onPress={pickImageFromLibrary}
+                    style={[styles.iconButton, isCompactWidth && styles.iconButtonCompact]}
+                    activeOpacity={0.8}
+                  >
                     <Ionicons name="image-outline" size={20} color={palette.textSecondary} />
                   </TouchableOpacity>
-            <TouchableOpacity
-                    style={[styles.sendButton, (!message.trim() || isLoading) && styles.sendButtonDisabled]}
-              onPress={handleSend}
-              disabled={!message.trim() || isLoading}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="arrow-up" size={20} color="white" />
-            </TouchableOpacity>
-          </View>
+                  <TouchableOpacity
+                    style={[
+                      styles.sendButton,
+                      isCompactWidth && styles.sendButtonCompact,
+                      (!message.trim() || isLoading) && styles.sendButtonDisabled,
+                    ]}
+                    onPress={handleSend}
+                    disabled={!message.trim() || isLoading}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="arrow-up" size={20} color="white" />
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
           </>
@@ -2179,7 +2330,7 @@ export default function ChatScreen() {
           <View style={styles.imageTabContainer}>
             <ScrollView
               style={styles.imageScroll}
-              contentContainerStyle={generatedImages.length === 0 ? styles.imageEmptyState : styles.imageResults}
+              contentContainerStyle={generatedImages.length === 0 ? imageEmptyStateStyle : imageResultsStyle}
               showsVerticalScrollIndicator={true}
               nestedScrollEnabled={true}
               keyboardShouldPersistTaps="handled"
@@ -2247,9 +2398,9 @@ export default function ChatScreen() {
               )}
             </ScrollView>
 
-            <View style={styles.imageComposer}>
+            <View style={[styles.imageComposer, isCompactWidth && styles.imageComposerCompact]}>
               <TouchableOpacity
-                style={styles.imageModelSelector}
+                style={[styles.imageModelSelector, isCompactWidth && styles.imageModelSelectorCompact]}
                 onPress={() => setShowModelPicker(true)}
                 activeOpacity={0.85}
               >
@@ -2259,13 +2410,13 @@ export default function ChatScreen() {
                 <Ionicons name="chevron-down" size={16} color={palette.accentStrong} />
               </TouchableOpacity>
 
-              <View style={styles.sizeChipsRow}>
+              <View style={[styles.sizeChipsRow, isCompactWidth && styles.sizeChipsRowCompact]}>
                 {suggestedImageSizes.map((size) => {
                   const isActive = imageOptions.width === size.width && imageOptions.height === size.height;
                   return (
                     <TouchableOpacity
                       key={`${size.width}x${size.height}`}
-                      style={[styles.sizeChip, isActive && styles.sizeChipActive]}
+                      style={[styles.sizeChip, isCompactWidth && styles.sizeChipCompact, isActive && styles.sizeChipActive]}
                       onPress={() => handleSelectImageSize(size.width, size.height)}
                     >
                       <Text style={[styles.sizeChipText, isActive && styles.sizeChipTextActive]}>
@@ -2276,9 +2427,9 @@ export default function ChatScreen() {
                 })}
               </View>
 
-              <View style={styles.imagePromptField}>
+              <View style={[styles.imagePromptField, isCompactWidth && styles.imagePromptFieldCompact]}>
                 <TextInput
-                  style={styles.imagePromptInput}
+                  style={[styles.imagePromptInput, isCompactWidth && styles.imagePromptInputCompact]}
                   placeholder="Describe what you want to see..."
                   placeholderTextColor={palette.textMuted}
                   value={imagePrompt}
@@ -2290,7 +2441,11 @@ export default function ChatScreen() {
               </View>
 
               <TouchableOpacity
-                style={[styles.generateButton, (isGeneratingImage || !imagePrompt.trim()) && styles.generateButtonDisabled]}
+                style={[
+                  styles.generateButton,
+                  isCompactWidth && styles.generateButtonCompact,
+                  (isGeneratingImage || !imagePrompt.trim()) && styles.generateButtonDisabled,
+                ]}
                 onPress={handleGenerateImage}
                 disabled={isGeneratingImage || !imagePrompt.trim()}
                 activeOpacity={0.85}
@@ -2370,12 +2525,6 @@ export default function ChatScreen() {
   );
 }
 
-const palette = theme.colors;
-const space = theme.spacing;
-const radii = theme.radius;
-const fonts = theme.fonts;
-const shadow = theme.shadows;
-
 const styles = StyleSheet.create({
   webContainer: {
     flex: 1,
@@ -2393,6 +2542,11 @@ const styles = StyleSheet.create({
       maxWidth: 1200,
       width: '100%',
     }),
+  },
+  chromeContainer: {
+    backgroundColor: palette.surface,
+    borderBottomColor: palette.divider,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   loadingContainer: {
     flex: 1,
@@ -2413,10 +2567,23 @@ const styles = StyleSheet.create({
     borderBottomColor: palette.divider,
     ...shadow.subtle,
   },
+  headerCompact: {
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+  },
+  headerUltraCompact: {
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+  },
   headerContent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  headerContentCompact: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: space.md,
   },
   headerLeft: {
     flexDirection: 'row',
@@ -2426,6 +2593,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.sm,
+  },
+  headerRightCompact: {
+    width: '100%',
+    justifyContent: 'space-between',
+    gap: space.xs,
+  },
+  headerActionButtonCompact: {
+    padding: space.xs,
+    minWidth: 40,
+    minHeight: 40,
   },
   tabSwitcherRow: {
     flexDirection: 'row',
@@ -2439,6 +2616,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: palette.divider,
   },
+  tabSwitcherRowCompact: {
+    gap: space.xs,
+    paddingHorizontal: space.md,
+    paddingTop: space.sm,
+    paddingBottom: space.xs,
+  },
   tabButton: {
     flex: 1,
     paddingVertical: space.sm,
@@ -2446,6 +2629,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.border,
     backgroundColor: palette.surfaceElevated,
+  },
+  tabButtonCompact: {
+    paddingVertical: space.xs,
+    borderRadius: radii.md,
   },
   tabButtonActive: {
     backgroundColor: palette.accentSoft,
@@ -2457,6 +2644,9 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     color: palette.textSecondary,
     letterSpacing: 0.4,
+  },
+  tabButtonTextCompact: {
+    fontSize: 13,
   },
   tabButtonTextActive: {
     color: palette.accentStrong,
@@ -2476,6 +2666,9 @@ const styles = StyleSheet.create({
     fontFamily: fonts.semibold,
     letterSpacing: 0.3,
   },
+  logoTextCompact: {
+    fontSize: 18,
+  },
   modelSelector: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2491,12 +2684,20 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 4,
   },
+  modelSelectorCompact: {
+    flex: 1,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+  },
   modelText: {
     fontSize: 14,
     color: palette.accentStrong,
     marginRight: space.xs,
     fontFamily: fonts.medium,
     letterSpacing: 0.4,
+  },
+  modelTextCompact: {
+    fontSize: 13,
   },
   settingsButton: {
     padding: space.sm,
@@ -2522,9 +2723,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: space.xxl,
   },
+  emptyStateCompact: {
+    paddingHorizontal: space.lg,
+  },
   messagesContent: {
     paddingVertical: space.xl,
     paddingHorizontal: space.lg,
+  },
+  messagesContentCompact: {
+    paddingHorizontal: space.md,
   },
   welcomeContainer: {
     alignItems: 'center',
@@ -2763,12 +2970,19 @@ const styles = StyleSheet.create({
     maxHeight: 80,
     marginBottom: space.sm,
   },
+  attachmentsBarCompact: {
+    marginBottom: space.xs,
+  },
   attachmentsContent: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: space.sm,
     paddingBottom: space.sm,
     gap: space.sm,
+  },
+  attachmentsContentCompact: {
+    paddingHorizontal: space.xs,
+    gap: space.xs,
   },
   attachmentItem: {
     width: 60,
@@ -2803,6 +3017,13 @@ const styles = StyleSheet.create({
     borderTopColor: palette.divider,
     gap: space.md,
   },
+  composerContainerCompact: {
+    paddingHorizontal: space.md,
+    gap: space.sm,
+  },
+  composerContainerUltraCompact: {
+    paddingHorizontal: space.sm,
+  },
   composerShell: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2815,16 +3036,27 @@ const styles = StyleSheet.create({
     paddingVertical: space.sm,
     gap: space.md,
   },
+  composerShellCompact: {
+    paddingHorizontal: space.sm,
+    paddingVertical: space.xs,
+    gap: space.sm,
+  },
   composerInner: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.md,
   },
+  composerInnerCompact: {
+    gap: space.sm,
+  },
   composerActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.sm,
+  },
+  composerActionsCompact: {
+    gap: space.xs,
   },
   iconButton: {
     width: 40,
@@ -2835,6 +3067,11 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceActive,
     borderWidth: 1,
     borderColor: palette.border,
+  },
+  iconButtonCompact: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
   },
   sentImagesRow: {
     flexDirection: 'row',
@@ -2870,6 +3107,12 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 6,
   },
+  sendButtonCompact: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginLeft: space.sm,
+  },
   sendButtonDisabled: {
     backgroundColor: palette.borderMuted,
     shadowOpacity: 0,
@@ -2890,9 +3133,16 @@ const styles = StyleSheet.create({
     padding: space.xl,
     gap: space.md,
   },
+  imageEmptyStateCompact: {
+    padding: space.lg,
+  },
   imageResults: {
     padding: space.lg,
     gap: space.lg,
+  },
+  imageResultsCompact: {
+    padding: space.md,
+    gap: space.md,
   },
   errorBanner: {
     borderRadius: radii.lg,
@@ -2927,6 +3177,11 @@ const styles = StyleSheet.create({
     borderTopColor: palette.divider,
     backgroundColor: palette.surface,
   },
+  imageComposerCompact: {
+    paddingHorizontal: space.md,
+    paddingVertical: space.md,
+    gap: space.sm,
+  },
   imageModelSelector: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2938,6 +3193,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg,
     paddingVertical: space.sm,
   },
+  imageModelSelectorCompact: {
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+  },
   imageModelLabel: {
     fontSize: 14,
     color: palette.textPrimary,
@@ -2948,6 +3207,9 @@ const styles = StyleSheet.create({
     gap: space.sm,
     flexWrap: 'wrap',
   },
+  sizeChipsRowCompact: {
+    gap: space.xs,
+  },
   sizeChip: {
     paddingHorizontal: space.md,
     paddingVertical: space.xs,
@@ -2955,6 +3217,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.border,
     backgroundColor: palette.surfaceElevated,
+  },
+  sizeChipCompact: {
+    paddingHorizontal: space.sm,
+    marginTop: space.xs,
   },
   sizeChipActive: {
     borderColor: palette.accent,
@@ -2975,12 +3241,19 @@ const styles = StyleSheet.create({
     backgroundColor: palette.inputBackground,
     padding: space.md,
   },
+  imagePromptFieldCompact: {
+    padding: space.sm,
+  },
   imagePromptInput: {
     minHeight: 150,
     fontSize: 16,
     color: palette.textPrimary,
     textAlignVertical: 'top',
     fontFamily: fonts.regular,
+  },
+  imagePromptInputCompact: {
+    minHeight: 120,
+    fontSize: 15,
   },
   generateButton: {
     height: 52,
@@ -2989,6 +3262,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     ...shadow.elevated,
+  },
+  generateButtonCompact: {
+    height: 48,
   },
   generateButtonDisabled: {
     backgroundColor: palette.borderMuted,
