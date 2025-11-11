@@ -1,80 +1,92 @@
 import { Platform } from 'react-native';
 
-const iosFont = 'System';
-const androidFont = 'sans-serif';
-const webFont = '"Outfit", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const palette = {
+  black: '#000000',
+  black_alt: '#0A0A0A',
+  white: '#FFFFFF',
+  gray_light: '#F5F5F5',
+  gray: '#CCCCCC',
+  gray_dark: '#888888',
+  gray_darker: '#444444',
+  gray_darkest: '#1E1E1E',
 
-export const fonts = {
-  regular: Platform.select({ ios: iosFont, android: androidFont, default: webFont }) ?? iosFont,
-  medium: Platform.select({ ios: iosFont, android: 'sans-serif-medium', default: webFont }) ?? iosFont,
-  semibold: Platform.select({ ios: iosFont, android: 'sans-serif-medium', default: webFont }) ?? iosFont,
-  mono: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }) ?? 'Menlo',
-};
-
-export const colors = {
-  background: '#0D1016',
-  backgroundMuted: '#121720',
-  surface: '#131821',
-  surfaceElevated: '#161D27',
-  surfaceActive: '#1B2431',
-  border: '#1F2935',
-  borderMuted: '#1B2530',
-  overlay: 'rgba(13, 16, 22, 0.92)',
-  textPrimary: '#F4F7FB',
-  textSecondary: '#A1ADC5',
-  textMuted: '#6B768A',
-  accent: '#FF6B35',
-  accentSoft: 'rgba(255, 107, 53, 0.12)',
-  accentStrong: '#FF8C42',
-  warning: '#F97316',
-  danger: '#F97066',
-  success: '#34D399',
-  highlight: '#1F2937',
-  inputBackground: '#10161F',
-  inputBorder: '#243041',
-  divider: 'rgba(255, 255, 255, 0.06)',
-  glow: 'rgba(255, 107, 53, 0.35)',
-};
-
-export const spacing = {
-  xs: 4,
-  sm: 8,
-  md: 12,
-  lg: 16,
-  xl: 24,
-  xxl: 32,
-};
-
-export const radius = {
-  sm: 10,
-  md: 16,
-  lg: 24,
-  pill: 999,
-};
-
-export const shadows = {
-  subtle: {
-    shadowColor: 'rgba(0, 0, 0, 0.45)',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  elevated: {
-    shadowColor: 'rgba(255, 107, 53, 0.2)',
-    shadowOffset: { width: 0, height: 16 },
-    shadowOpacity: 0.3,
-    shadowRadius: 32,
-    elevation: 12,
-  },
+  neon_pink: '#F000FF', // Vivid magenta
+  neon_cyan: '#00FFFF', // Bright cyan
+  neon_green: '#39FF14', // Electric lime
+  neon_orange: '#FF7F00', // Bright orange
 };
 
 export const theme = {
-  colors,
-  spacing,
-  radius,
-  fonts,
-  shadows,
-};
+  colors: {
+    background: palette.black_alt,
+    backgroundMuted: palette.black,
+    surface: palette.gray_darkest,
+    surfaceElevated: '#101010',
+    surfaceActive: palette.gray_darker,
 
-export type Theme = typeof theme;
+    divider: '#282828',
+    border: palette.gray_darker,
+    borderMuted: '#333333',
+
+    textPrimary: palette.gray_light,
+    textSecondary: palette.gray,
+    textMuted: palette.gray_dark,
+
+    accent: palette.neon_cyan,
+    accentStrong: palette.white,
+    accentSoft: 'rgba(0, 255, 255, 0.1)',
+    glow: palette.neon_cyan,
+
+    inputBackground: '#050505',
+    inputBorder: palette.gray_darker,
+    
+    success: palette.neon_green,
+    warning: palette.neon_orange,
+    danger: palette.neon_pink,
+
+    // Neons for multi-color effects if needed
+    neon: {
+      pink: palette.neon_pink,
+      cyan: palette.neon_cyan,
+      green: palette.neon_green,
+      orange: palette.neon_orange,
+    }
+  },
+  spacing: {
+    xs: 4,
+    sm: 8,
+    md: 12,
+    lg: 16,
+    xl: 24,
+    xxl: 32,
+  },
+  radius: {
+    sm: 4,
+    md: 8,
+    lg: 16,
+    pill: 9999,
+  },
+  fonts: {
+    regular: Platform.OS === 'web' ? 'Outfit, sans-serif' : 'System',
+    medium: Platform.OS === 'web' ? 'Outfit, sans-serif' : 'System',
+    semibold: Platform.OS === 'web' ? 'Outfit, sans-serif' : 'System',
+    bold: Platform.OS === 'web' ? 'Outfit, sans-serif' : 'System',
+    mono: Platform.OS === 'web' ? 'monospace' : 'System',
+  },
+  shadows: {
+    subtle: {
+      shadowColor: palette.black,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      elevation: 2,
+    },
+    elevated: {
+      shadowColor: palette.black,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.2,
+      shadowRadius: 16,
+      elevation: 8,
+    },
+  },
+};
