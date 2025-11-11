@@ -2151,7 +2151,7 @@ export default function ChatScreen() {
         <StatusBar style="light" />
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'padding' : 'height'}
         keyboardVerticalOffset={keyboardVerticalOffset}
       >
         <View style={styles.chromeContainer} onLayout={handleChromeLayout}>
@@ -2398,7 +2398,11 @@ export default function ChatScreen() {
               )}
             </ScrollView>
 
-            <View style={[styles.imageComposer, isCompactWidth && styles.imageComposerCompact]}>
+            <View style={[
+              styles.imageComposer,
+              isCompactWidth && styles.imageComposerCompact,
+              Platform.OS !== 'web' && { paddingBottom: Math.max(insets.bottom, space.md) }
+            ]}>
               <TouchableOpacity
                 style={[styles.imageModelSelector, isCompactWidth && styles.imageModelSelectorCompact]}
                 onPress={() => setShowModelPicker(true)}
@@ -3016,6 +3020,15 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: palette.divider,
     gap: space.md,
+    ...(Platform.OS === 'android' && {
+      elevation: 8,
+    }),
+    ...(Platform.OS === 'ios' && {
+      shadowColor: palette.glow,
+      shadowOffset: { width: 0, height: -2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 8,
+    }),
   },
   composerContainerCompact: {
     paddingHorizontal: space.md,
@@ -3088,8 +3101,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: palette.textPrimary,
     maxHeight: 200,
+    minHeight: Platform.OS === 'web' ? 20 : 44,
     paddingVertical: space.xs,
     paddingRight: space.sm,
+    paddingLeft: Platform.OS === 'web' ? 0 : space.xs,
     textAlignVertical: 'top',
     fontFamily: fonts.regular,
   },
@@ -3176,6 +3191,15 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: palette.divider,
     backgroundColor: palette.surface,
+    ...(Platform.OS === 'android' && {
+      elevation: 8,
+    }),
+    ...(Platform.OS === 'ios' && {
+      shadowColor: palette.glow,
+      shadowOffset: { width: 0, height: -2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 8,
+    }),
   },
   imageComposerCompact: {
     paddingHorizontal: space.md,
