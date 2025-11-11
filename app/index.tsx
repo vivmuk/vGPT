@@ -153,23 +153,46 @@ export default function FullAppScreen() {
   const loadModels = useCallback(async () => {
     setIsLoadingModels(true);
     try {
-      const response = await fetch(VENICE_MODELS_ENDPOINT, {
+      // Load all models (text models)
+      const textResponse = await fetch(VENICE_MODELS_ENDPOINT, {
         method: 'GET',
         headers: { Authorization: `Bearer ${VENICE_API_KEY}` },
       });
 
-      if (!response.ok) {
-        throw new Error(`Venice API error: ${response.status}`);
+      if (!textResponse.ok) {
+        throw new Error(`Venice API error: ${textResponse.status}`);
       }
 
-      const data = await response.json();
-      const incomingModels: VeniceModel[] = Array.isArray(data?.data)
-        ? data.data
-        : Array.isArray(data?.models)
-        ? data.models
+      const textData = await textResponse.json();
+      const textModelsList: VeniceModel[] = Array.isArray(textData?.data)
+        ? textData.data
+        : Array.isArray(textData?.models)
+        ? textData.models
         : [];
 
-      setModels(incomingModels);
+      // Load image models separately with type=image query parameter
+      const imageResponse = await fetch(`${VENICE_MODELS_ENDPOINT}?type=image`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${VENICE_API_KEY}` },
+      });
+
+      let imageModelsList: VeniceModel[] = [];
+      if (imageResponse.ok) {
+        const imageData = await imageResponse.json();
+        imageModelsList = Array.isArray(imageData?.data)
+          ? imageData.data
+          : Array.isArray(imageData?.models)
+          ? imageData.models
+          : [];
+      } else {
+        console.warn('Failed to load image models:', imageResponse.status);
+      }
+
+      // Combine all models
+      const allModels = [...textModelsList, ...imageModelsList];
+      setModels(allModels);
+      
+      console.log(`Loaded ${textModelsList.length} text models and ${imageModelsList.length} image models`);
     } catch (error) {
       console.error('Failed to load models:', error);
       Alert.alert('Error', 'Failed to load available models');
@@ -312,6 +335,7 @@ export default function FullAppScreen() {
       };
 
       let rawAssistantContent = '';
+      let finalUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null;
       const contentType = response.headers.get('content-type') ?? '';
 
       if (contentType.includes('text/event-stream') && response.body) {
@@ -336,15 +360,15 @@ export default function FullAppScreen() {
                 const parsed = JSON.parse(data);
                 const choice = parsed?.choices?.[0];
                 
-                // Track tokens and metrics
+                // Capture usage data when available (usually in final chunk)
                 if (parsed?.usage) {
-                  const usage = parsed.usage;
-                  tokenCountRef.current = usage.total_tokens || usage.completion_tokens || 0;
+                  finalUsage = parsed.usage;
+                  tokenCountRef.current = finalUsage.total_tokens || finalUsage.completion_tokens || tokenCountRef.current;
                 }
                 
                 if (choice?.delta?.content) {
                   rawAssistantContent += choice.delta.content;
-                  // Estimate tokens (rough approximation: 1 token ≈ 4 characters)
+                  // Estimate tokens for streaming display (rough approximation: 1 token ≈ 4 characters)
                   const newTokens = Math.ceil(choice.delta.content.length / 4);
                   tokenCountRef.current += newTokens;
                   
@@ -364,36 +388,6 @@ export default function FullAppScreen() {
                   rawAssistantContent = choice.message.content;
                   updateAssistantMessage({ content: rawAssistantContent });
                 }
-                
-                // Final metrics update
-                if (parsed?.usage) {
-                  const usage = parsed.usage;
-                  const responseTime = (Date.now() - responseStartTimeRef.current) / 1000;
-                  const currentModel = models.find(m => m.id === settings.model);
-                  const inputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.input);
-                  const outputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.output);
-                  
-                  let cost = 0;
-                  if (inputPrice && usage.prompt_tokens) {
-                    cost += (inputPrice * usage.prompt_tokens) / 1_000_000;
-                  }
-                  if (outputPrice && usage.completion_tokens) {
-                    cost += (outputPrice * usage.completion_tokens) / 1_000_000;
-                  }
-                  
-                  const tokensPerSecond = responseTime > 0 ? (usage.total_tokens || tokenCountRef.current) / responseTime : 0;
-                  
-                  updateAssistantMessage({
-                    metrics: {
-                      tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
-                      totalTokens: usage.total_tokens || tokenCountRef.current,
-                      inputTokens: usage.prompt_tokens,
-                      outputTokens: usage.completion_tokens,
-                      cost: cost > 0 ? Math.round(cost * 10000) / 10000 : undefined,
-                      responseTime: Math.round(responseTime * 10) / 10,
-                    }
-                  });
-                }
               } catch (streamError) {
                 console.error('Failed to parse stream chunk:', streamError);
               }
@@ -409,25 +403,38 @@ export default function FullAppScreen() {
         const inputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.input);
         const outputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.output);
         
-        // Estimate tokens if not provided
-        const estimatedTokens = Math.ceil(rawAssistantContent.length / 4);
-        const tokensPerSecond = responseTime > 0 ? estimatedTokens / responseTime : 0;
+        let inputTokens = finalUsage?.prompt_tokens;
+        let outputTokens = finalUsage?.completion_tokens;
+        let totalTokens = finalUsage?.total_tokens;
+        
+        // If usage data not available, estimate from content
+        if (!inputTokens || !outputTokens) {
+          const estimatedOutputTokens = Math.ceil(rawAssistantContent.length / 4);
+          // Estimate input tokens from conversation history
+          const conversationText = conversationHistory.map(m => m.content).join(' ');
+          const estimatedInputTokens = Math.ceil(conversationText.length / 4);
+          
+          inputTokens = inputTokens || estimatedInputTokens;
+          outputTokens = outputTokens || estimatedOutputTokens;
+          totalTokens = totalTokens || (inputTokens + outputTokens);
+        }
+        
+        const tokensPerSecond = responseTime > 0 && totalTokens ? totalTokens / responseTime : 0;
         
         let cost = 0;
-        if (inputPrice && tokenCountRef.current > 0) {
-          // Rough estimate: assume 20% input, 80% output
-          const inputEstimate = Math.ceil(tokenCountRef.current * 0.2);
-          const outputEstimate = tokenCountRef.current - inputEstimate;
-          cost += (inputPrice * inputEstimate) / 1_000_000;
-          if (outputPrice) {
-            cost += (outputPrice * outputEstimate) / 1_000_000;
-          }
+        if (inputPrice && inputTokens) {
+          cost += (inputPrice * inputTokens) / 1_000_000;
+        }
+        if (outputPrice && outputTokens) {
+          cost += (outputPrice * outputTokens) / 1_000_000;
         }
         
         updateAssistantMessage({
           metrics: {
             tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
-            totalTokens: tokenCountRef.current || estimatedTokens,
+            totalTokens: totalTokens,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens,
             cost: cost > 0 ? Math.round(cost * 10000) / 10000 : undefined,
             responseTime: Math.round(responseTime * 10) / 10,
           }
@@ -575,11 +582,14 @@ export default function FullAppScreen() {
         <Text style={item.role === 'user' ? styles.userMessageText : styles.assistantMessageText}>{item.content}</Text>
         {item.role === 'assistant' && item.metrics && (
           <View style={styles.metricsContainer}>
+            {item.metrics.inputTokens !== undefined && (
+              <Text style={styles.metricText}>📥 {item.metrics.inputTokens} in</Text>
+            )}
+            {item.metrics.outputTokens !== undefined && (
+              <Text style={styles.metricText}>📤 {item.metrics.outputTokens} out</Text>
+            )}
             {item.metrics.tokensPerSecond !== undefined && (
               <Text style={styles.metricText}>⚡ {item.metrics.tokensPerSecond} tok/s</Text>
-            )}
-            {item.metrics.totalTokens !== undefined && (
-              <Text style={styles.metricText}>📊 {item.metrics.totalTokens} tokens</Text>
             )}
             {item.metrics.responseTime !== undefined && (
               <Text style={styles.metricText}>⏱️ {item.metrics.responseTime}s</Text>
