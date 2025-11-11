@@ -2718,11 +2718,10 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   messagesContainer: {
-    flex: 1,
     backgroundColor: palette.backgroundMuted,
   },
   emptyState: {
-    flex: 1,
+    flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: space.xxl,
@@ -2731,6 +2730,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg,
   },
   messagesContent: {
+    flexGrow: 1,
     paddingVertical: space.xl,
     paddingHorizontal: space.lg,
   },
@@ -3138,9 +3138,7 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: palette.divider,
   },
-  imageScroll: {
-    flex: 1,
-  },
+  imageScroll: {},
   imageEmptyState: {
     flexGrow: 1,
     alignItems: 'center',
@@ -3152,6 +3150,7 @@ const styles = StyleSheet.create({
     padding: space.lg,
   },
   imageResults: {
+    flexGrow: 1,
     padding: space.lg,
     gap: space.lg,
   },
