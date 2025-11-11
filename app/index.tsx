@@ -140,12 +140,7 @@ export default function ChatScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
-      <KeyboardAvoidingView 
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 25}
-      >
-        <View style={styles.header}>
+      <View style={styles.header}>
             <View style={styles.logo}>
                 <Text style={styles.logoIcon}>✨</Text>
                 <Text style={styles.logoText}>vGPT</Text>
@@ -153,8 +148,12 @@ export default function ChatScreen() {
             <TouchableOpacity style={styles.headerButton} onPress={() => router.push('/settings')}>
                 <Ionicons name="settings-outline" size={22} color={palette.textSecondary} />
             </TouchableOpacity>
-        </View>
-
+      </View>
+      <KeyboardAvoidingView 
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      >
         <View style={styles.chatContainer}>
           {messages.length === 0 && !isLoading && (
              <View style={styles.welcomeContainer}>
@@ -265,11 +264,13 @@ const styles = StyleSheet.create({
     marginBottom: space.sm,
     textShadowColor: palette.neon.cyan,
     textShadowRadius: 10,
+    textAlign: 'center',
   },
   welcomeSubtitle: {
     fontSize: 16,
     fontFamily: fonts.regular,
     color: palette.textSecondary,
+    textAlign: 'center',
   },
   messageRow: {
     marginVertical: space.sm,
