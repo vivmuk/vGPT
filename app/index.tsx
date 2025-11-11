@@ -99,11 +99,11 @@ export default function ChatScreen() {
   }, []);
 
   useEffect(() => {
-    // Animate composer to bottom when messages appear
+    // Animate composer to bottom when messages appear or to center when empty
     Animated.timing(composerY, {
-      toValue: messages.length > 0 ? 0 : height / 2 - 100, // Center-ish
-      duration: 300,
-      easing: Easing.out(Easing.ease),
+      toValue: messages.length > 0 ? 0 : -(height / 2) + 150, // Negative value to move UP from the bottom
+      duration: 350,
+      easing: Easing.out(Easing.cubic),
       useNativeDriver: Platform.OS !== 'web',
     }).start();
   }, [messages.length, height]);
