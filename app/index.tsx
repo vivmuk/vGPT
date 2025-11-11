@@ -22,6 +22,7 @@ import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
+import Slider from '@react-native-community/slider';
 import { DEFAULT_SETTINGS } from '@/constants/settings';
 import { AppSettings } from '@/types/settings';
 import { VeniceModel } from '@/types/venice';
@@ -38,6 +39,14 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   id: string;
+  metrics?: {
+    tokensPerSecond?: number;
+    totalTokens?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    cost?: number;
+    responseTime?: number;
+  };
 }
 
 interface GeneratedImage {
@@ -97,8 +106,11 @@ export default function FullAppScreen() {
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
   const [imageError, setImageError] = useState<string | null>(null);
+  const [showImageSettings, setShowImageSettings] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const activeRequestControllerRef = useRef<AbortController | null>(null);
+  const responseStartTimeRef = useRef<number>(0);
+  const tokenCountRef = useRef<number>(0);
 
   const composerY = useRef(new Animated.Value(0)).current;
 
@@ -121,10 +133,14 @@ export default function FullAppScreen() {
     [models]
   );
 
-  const imageModels = useMemo(() => 
-    models.filter((model) => isImageModel(model)), 
-    [models]
-  );
+  const imageModels = useMemo(() => {
+    const filtered = models.filter((model) => isImageModel(model));
+    // Debug: log if no image models found
+    if (filtered.length === 0 && models.length > 0) {
+      console.log('No image models found. Available model types:', models.map(m => ({ id: m.id, type: m.type, capabilities: m.model_spec?.capabilities })));
+    }
+    return filtered;
+  }, [models]);
 
   const updateSettings = useCallback((newSettings: Partial<AppSettings>) => {
     setSettings((prev) => {
@@ -277,6 +293,9 @@ export default function FullAppScreen() {
       }
 
       assistantMessageId = `${Date.now()}-assistant`;
+      responseStartTimeRef.current = Date.now();
+      tokenCountRef.current = 0;
+      
       const placeholderMessage: Message = {
         role: 'assistant',
         content: '',
@@ -293,7 +312,6 @@ export default function FullAppScreen() {
       };
 
       let rawAssistantContent = '';
-
       const contentType = response.headers.get('content-type') ?? '';
 
       if (contentType.includes('text/event-stream') && response.body) {
@@ -317,13 +335,64 @@ export default function FullAppScreen() {
               try {
                 const parsed = JSON.parse(data);
                 const choice = parsed?.choices?.[0];
+                
+                // Track tokens and metrics
+                if (parsed?.usage) {
+                  const usage = parsed.usage;
+                  tokenCountRef.current = usage.total_tokens || usage.completion_tokens || 0;
+                }
+                
                 if (choice?.delta?.content) {
                   rawAssistantContent += choice.delta.content;
-                  updateAssistantMessage({ content: rawAssistantContent });
+                  // Estimate tokens (rough approximation: 1 token ≈ 4 characters)
+                  const newTokens = Math.ceil(choice.delta.content.length / 4);
+                  tokenCountRef.current += newTokens;
+                  
+                  const now = Date.now();
+                  const elapsed = (now - responseStartTimeRef.current) / 1000;
+                  const tokensPerSecond = elapsed > 0 ? tokenCountRef.current / elapsed : 0;
+                  
+                  updateAssistantMessage({ 
+                    content: rawAssistantContent,
+                    metrics: {
+                      tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
+                      totalTokens: tokenCountRef.current,
+                    }
+                  });
                 }
                 if (choice?.message?.content) {
                   rawAssistantContent = choice.message.content;
                   updateAssistantMessage({ content: rawAssistantContent });
+                }
+                
+                // Final metrics update
+                if (parsed?.usage) {
+                  const usage = parsed.usage;
+                  const responseTime = (Date.now() - responseStartTimeRef.current) / 1000;
+                  const currentModel = models.find(m => m.id === settings.model);
+                  const inputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.input);
+                  const outputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.output);
+                  
+                  let cost = 0;
+                  if (inputPrice && usage.prompt_tokens) {
+                    cost += (inputPrice * usage.prompt_tokens) / 1_000_000;
+                  }
+                  if (outputPrice && usage.completion_tokens) {
+                    cost += (outputPrice * usage.completion_tokens) / 1_000_000;
+                  }
+                  
+                  const tokensPerSecond = responseTime > 0 ? (usage.total_tokens || tokenCountRef.current) / responseTime : 0;
+                  
+                  updateAssistantMessage({
+                    metrics: {
+                      tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
+                      totalTokens: usage.total_tokens || tokenCountRef.current,
+                      inputTokens: usage.prompt_tokens,
+                      outputTokens: usage.completion_tokens,
+                      cost: cost > 0 ? Math.round(cost * 10000) / 10000 : undefined,
+                      responseTime: Math.round(responseTime * 10) / 10,
+                    }
+                  });
                 }
               } catch (streamError) {
                 console.error('Failed to parse stream chunk:', streamError);
@@ -333,10 +402,71 @@ export default function FullAppScreen() {
         }
 
         reader.releaseLock?.();
+        
+        // Final metrics calculation after stream completes
+        const responseTime = (Date.now() - responseStartTimeRef.current) / 1000;
+        const currentModel = models.find(m => m.id === settings.model);
+        const inputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.input);
+        const outputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.output);
+        
+        // Estimate tokens if not provided
+        const estimatedTokens = Math.ceil(rawAssistantContent.length / 4);
+        const tokensPerSecond = responseTime > 0 ? estimatedTokens / responseTime : 0;
+        
+        let cost = 0;
+        if (inputPrice && tokenCountRef.current > 0) {
+          // Rough estimate: assume 20% input, 80% output
+          const inputEstimate = Math.ceil(tokenCountRef.current * 0.2);
+          const outputEstimate = tokenCountRef.current - inputEstimate;
+          cost += (inputPrice * inputEstimate) / 1_000_000;
+          if (outputPrice) {
+            cost += (outputPrice * outputEstimate) / 1_000_000;
+          }
+        }
+        
+        updateAssistantMessage({
+          metrics: {
+            tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
+            totalTokens: tokenCountRef.current || estimatedTokens,
+            cost: cost > 0 ? Math.round(cost * 10000) / 10000 : undefined,
+            responseTime: Math.round(responseTime * 10) / 10,
+          }
+        });
       } else {
         const data = await response.json();
         rawAssistantContent = data?.choices?.[0]?.message?.content ?? '';
-        updateAssistantMessage({ content: rawAssistantContent || "Sorry, I couldn't generate a response." });
+        const responseTime = (Date.now() - responseStartTimeRef.current) / 1000;
+        const usage = data?.usage;
+        
+        const currentModel = models.find(m => m.id === settings.model);
+        const inputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.input);
+        const outputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.output);
+        
+        let cost = 0;
+        if (usage) {
+          if (inputPrice && usage.prompt_tokens) {
+            cost += (inputPrice * usage.prompt_tokens) / 1_000_000;
+          }
+          if (outputPrice && usage.completion_tokens) {
+            cost += (outputPrice * usage.completion_tokens) / 1_000_000;
+          }
+        }
+        
+        const tokensPerSecond = usage && responseTime > 0 
+          ? (usage.total_tokens || 0) / responseTime 
+          : 0;
+        
+        updateAssistantMessage({ 
+          content: rawAssistantContent || "Sorry, I couldn't generate a response.",
+          metrics: usage ? {
+            tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
+            totalTokens: usage.total_tokens,
+            inputTokens: usage.prompt_tokens,
+            outputTokens: usage.completion_tokens,
+            cost: cost > 0 ? Math.round(cost * 10000) / 10000 : undefined,
+            responseTime: Math.round(responseTime * 10) / 10,
+          } : undefined,
+        });
       }
     } catch (error) {
       console.error('Error sending message:', error);
@@ -383,6 +513,14 @@ export default function FullAppScreen() {
         format: 'png',
         hide_watermark: true,
       };
+      
+      // Add steps and guidance scale if supported
+      if (settings.imageSteps !== undefined) {
+        payload.steps = settings.imageSteps;
+      }
+      if (settings.imageGuidanceScale !== undefined) {
+        payload.guidance_scale = settings.imageGuidanceScale;
+      }
 
       const response = await fetch(VENICE_IMAGE_GENERATIONS_ENDPOINT, {
         method: 'POST',
@@ -435,6 +573,22 @@ export default function FullAppScreen() {
     <View style={[styles.messageRow, item.role === 'user' ? styles.userMessageRow : styles.assistantMessageRow]}>
       <View style={[styles.messageBubble, item.role === 'user' ? styles.userMessageBubble : styles.assistantMessageBubble]}>
         <Text style={item.role === 'user' ? styles.userMessageText : styles.assistantMessageText}>{item.content}</Text>
+        {item.role === 'assistant' && item.metrics && (
+          <View style={styles.metricsContainer}>
+            {item.metrics.tokensPerSecond !== undefined && (
+              <Text style={styles.metricText}>⚡ {item.metrics.tokensPerSecond} tok/s</Text>
+            )}
+            {item.metrics.totalTokens !== undefined && (
+              <Text style={styles.metricText}>📊 {item.metrics.totalTokens} tokens</Text>
+            )}
+            {item.metrics.responseTime !== undefined && (
+              <Text style={styles.metricText}>⏱️ {item.metrics.responseTime}s</Text>
+            )}
+            {item.metrics.cost !== undefined && item.metrics.cost > 0 && (
+              <Text style={styles.metricText}>💰 ${item.metrics.cost.toFixed(4)}</Text>
+            )}
+          </View>
+        )}
       </View>
     </View>
   );
@@ -539,6 +693,78 @@ export default function FullAppScreen() {
             </ScrollView>
           )}
 
+          {/* Image Settings Panel - appears above composer */}
+          {activeTab === 'image' && showImageSettings && (
+            <View style={styles.imageSettingsPanel}>
+              <View style={styles.imageSettingsRow}>
+                <Text style={styles.imageSettingsLabel}>Size</Text>
+                <View style={styles.imageSizeButtons}>
+                  {[
+                    { label: '512', w: 512, h: 512 },
+                    { label: '1024', w: 1024, h: 1024 },
+                    { label: '1:1', w: 1024, h: 1024 },
+                    { label: '16:9', w: 1024, h: 576 },
+                    { label: '9:16', w: 576, h: 1024 },
+                  ].map((size) => (
+                    <TouchableOpacity
+                      key={size.label}
+                      style={[
+                        styles.imageSizeButton,
+                        settings.imageWidth === size.w && settings.imageHeight === size.h && styles.imageSizeButtonActive
+                      ]}
+                      onPress={() => updateSettings({ imageWidth: size.w, imageHeight: size.h })}
+                    >
+                      <Text style={[
+                        styles.imageSizeButtonText,
+                        settings.imageWidth === size.w && settings.imageHeight === size.h && styles.imageSizeButtonTextActive
+                      ]}>
+                        {size.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+              
+              <View style={styles.imageSettingsRow}>
+                <Text style={styles.imageSettingsLabel}>Steps: {settings.imageSteps}</Text>
+                <View style={styles.sliderContainer}>
+                  <Text style={styles.sliderValue}>10</Text>
+                  <Slider
+                    style={styles.slider}
+                    minimumValue={10}
+                    maximumValue={50}
+                    step={1}
+                    value={settings.imageSteps}
+                    onValueChange={(value) => updateSettings({ imageSteps: Math.round(value) })}
+                    minimumTrackTintColor={palette.neon.pink}
+                    maximumTrackTintColor={palette.border}
+                    thumbTintColor={palette.neon.pink}
+                  />
+                  <Text style={styles.sliderValue}>50</Text>
+                </View>
+              </View>
+              
+              <View style={styles.imageSettingsRow}>
+                <Text style={styles.imageSettingsLabel}>Guidance: {settings.imageGuidanceScale}</Text>
+                <View style={styles.sliderContainer}>
+                  <Text style={styles.sliderValue}>1</Text>
+                  <Slider
+                    style={styles.slider}
+                    minimumValue={1}
+                    maximumValue={20}
+                    step={0.5}
+                    value={settings.imageGuidanceScale}
+                    onValueChange={(value) => updateSettings({ imageGuidanceScale: Math.round(value * 10) / 10 })}
+                    minimumTrackTintColor={palette.neon.pink}
+                    maximumTrackTintColor={palette.border}
+                    thumbTintColor={palette.neon.pink}
+                  />
+                  <Text style={styles.sliderValue}>20</Text>
+                </View>
+              </View>
+            </View>
+          )}
+
           <Animated.View style={[styles.composer, { transform: [{ translateY: activeTab === 'chat' ? composerY : 0 }] }]}>
             {activeTab === 'chat' ? (
               <>
@@ -556,6 +782,12 @@ export default function FullAppScreen() {
               </>
             ) : (
               <>
+                <TouchableOpacity 
+                  style={styles.imageSettingsButton}
+                  onPress={() => setShowImageSettings(!showImageSettings)}
+                >
+                  <Ionicons name="options-outline" size={20} color={palette.textSecondary} />
+                </TouchableOpacity>
                 <TextInput
                   style={styles.textInput}
                   placeholder="Describe an image..."
@@ -573,7 +805,7 @@ export default function FullAppScreen() {
                   {isGeneratingImage ? (
                     <ActivityIndicator size="small" color={palette.neon.pink} />
                   ) : (
-                    <Ionicons name="sparkles-outline" size={32} color={palette.neon.pink} />
+                    <Ionicons name="arrow-up-circle" size={32} color={palette.neon.pink} />
                   )}
                 </TouchableOpacity>
               </>
@@ -744,6 +976,7 @@ const styles = StyleSheet.create({
     },
     imageContent: {
         padding: space.lg,
+        paddingBottom: space.xl,
         gap: space.lg,
     },
     errorBanner: {
@@ -796,14 +1029,15 @@ const styles = StyleSheet.create({
     },
     listContentContainer: {
         paddingTop: space.lg,
-        paddingBottom: 100, // Safe area for composer
+        paddingBottom: space.xl,
         paddingHorizontal: space.lg,
     },
     welcomeContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        padding: space.lg,
+        padding: space.xl,
+        gap: space.md,
     },
     welcomeTitle: {
         fontSize: 32,
@@ -830,6 +1064,7 @@ const styles = StyleSheet.create({
         maxWidth: '85%',
         padding: space.md,
         borderRadius: radii.lg,
+        minWidth: 100,
     },
     userMessageBubble: {
         backgroundColor: palette.surface,
@@ -851,13 +1086,28 @@ const styles = StyleSheet.create({
         color: palette.textPrimary,
         fontFamily: fonts.regular,
     },
+    metricsContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        marginTop: space.sm,
+        paddingTop: space.sm,
+        borderTopWidth: 1,
+        borderTopColor: palette.divider,
+        gap: space.sm,
+    },
+    metricText: {
+        fontSize: 11,
+        color: palette.textMuted,
+        fontFamily: fonts.medium,
+    },
     composer: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: space.md,
         paddingBottom: space.md,
-        paddingTop: space.sm,
+        paddingTop: space.md,
         width: '100%',
+        backgroundColor: palette.background,
     },
     textInput: {
         flex: 1,
@@ -874,6 +1124,65 @@ const styles = StyleSheet.create({
         marginRight: space.sm,
     },
     sendButton: {},
+    imageSettingsButton: {
+        padding: space.sm,
+        marginRight: space.xs,
+    },
+    imageSettingsPanel: {
+        backgroundColor: palette.surface,
+        borderTopWidth: 1,
+        borderTopColor: palette.divider,
+        padding: space.md,
+        gap: space.md,
+    },
+    imageSettingsRow: {
+        gap: space.sm,
+    },
+    imageSettingsLabel: {
+        fontSize: 14,
+        color: palette.textPrimary,
+        fontFamily: fonts.medium,
+    },
+    imageSizeButtons: {
+        flexDirection: 'row',
+        gap: space.sm,
+        flexWrap: 'wrap',
+    },
+    imageSizeButton: {
+        paddingHorizontal: space.md,
+        paddingVertical: space.sm,
+        borderRadius: radii.md,
+        borderWidth: 1,
+        borderColor: palette.border,
+        backgroundColor: palette.background,
+    },
+    imageSizeButtonActive: {
+        borderColor: palette.neon.pink,
+        backgroundColor: palette.accentSoft,
+    },
+    imageSizeButtonText: {
+        fontSize: 12,
+        color: palette.textSecondary,
+        fontFamily: fonts.medium,
+    },
+    imageSizeButtonTextActive: {
+        color: palette.neon.pink,
+    },
+    sliderContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: space.sm,
+    },
+    slider: {
+        flex: 1,
+        height: 40,
+    },
+    sliderValue: {
+        fontSize: 12,
+        color: palette.textMuted,
+        fontFamily: fonts.medium,
+        minWidth: 30,
+    },
     modalContainer: {
         flex: 1,
         backgroundColor: palette.background,
