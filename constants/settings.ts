@@ -14,8 +14,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   stripThinking: false,
   disableThinking: false,
   imageModel: '',
-  imageSteps: 25,
+  imageSteps: 8,
   imageWidth: 1024,
   imageHeight: 1024,
-  imageGuidanceScale: 7,
+  imageGuidanceScale: 7.5,
 };

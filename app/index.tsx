@@ -14,8 +14,6 @@ import {
   ScrollView,
   ActivityIndicator,
   useWindowDimensions,
-  Animated,
-  Easing,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -111,8 +109,6 @@ export default function FullAppScreen() {
   const activeRequestControllerRef = useRef<AbortController | null>(null);
   const responseStartTimeRef = useRef<number>(0);
   const tokenCountRef = useRef<number>(0);
-
-  const composerY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     loadStoredSettings<AppSettings>(DEFAULT_SETTINGS).then(setSettings);
@@ -230,15 +226,7 @@ export default function FullAppScreen() {
     setShowModelPicker(false);
   }, [updateSettings]);
 
-  useEffect(() => {
-    // Animate composer to its place based on messages
-    Animated.timing(composerY, {
-      toValue: messages.length > 0 ? 0 : -(height / 2) + 150,
-      duration: 350,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: Platform.OS !== 'web',
-    }).start();
-  }, [messages.length, height]);
+  // Composer stays at bottom - no animation needed
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -517,16 +505,16 @@ export default function FullAppScreen() {
         prompt: imagePrompt.trim(),
         width: settings.imageWidth,
         height: settings.imageHeight,
-        format: 'png',
-        hide_watermark: true,
+        format: 'webp',
+        hide_watermark: false,
       };
       
-      // Add steps and guidance scale if supported
+      // Add steps (max 8) and cfg_scale (not guidance_scale)
       if (settings.imageSteps !== undefined) {
-        payload.steps = settings.imageSteps;
+        payload.steps = Math.min(settings.imageSteps, 8); // Enforce max 8
       }
       if (settings.imageGuidanceScale !== undefined) {
-        payload.guidance_scale = settings.imageGuidanceScale;
+        payload.cfg_scale = settings.imageGuidanceScale; // Use cfg_scale, not guidance_scale
       }
 
       const response = await fetch(VENICE_IMAGE_GENERATIONS_ENDPOINT, {
@@ -555,7 +543,7 @@ export default function FullAppScreen() {
         throw new Error('Image data is not a valid base64 string.');
       }
 
-      const imageData = `data:image/png;base64,${base64String}`;
+      const imageData = `data:image/webp;base64,${base64String}`;
       const generated: GeneratedImage = {
         id: `${Date.now()}`,
         prompt: imagePrompt.trim(),
@@ -576,10 +564,32 @@ export default function FullAppScreen() {
     }
   };
 
-  const renderMessageItem = ({ item }: { item: Message }) => (
-    <View style={[styles.messageRow, item.role === 'user' ? styles.userMessageRow : styles.assistantMessageRow]}>
-      <View style={[styles.messageBubble, item.role === 'user' ? styles.userMessageBubble : styles.assistantMessageBubble]}>
-        <Text style={item.role === 'user' ? styles.userMessageText : styles.assistantMessageText}>{item.content}</Text>
+  const formatMessageContent = (content: string): string => {
+    // Remove markdown formatting, preserve line breaks and basic structure
+    let formatted = content
+      .replace(/\*\*(.*?)\*\*/g, '$1') // Remove bold
+      .replace(/\*(.*?)\*/g, '$1') // Remove italic
+      .replace(/`(.*?)`/g, '$1') // Remove inline code
+      .replace(/```[\s\S]*?```/g, (match) => {
+        // Remove code blocks but preserve content
+        return match.replace(/```[a-z]*\n?/g, '').replace(/```/g, '');
+      })
+      .replace(/#{1,6}\s+(.*?)$/gm, '$1') // Remove headers
+      .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') // Remove links, keep text
+      .replace(/\n{3,}/g, '\n\n') // Replace 3+ line breaks with 2
+      .trim();
+    
+    return formatted;
+  };
+
+  const renderMessageItem = ({ item }: { item: Message }) => {
+    const formattedContent = formatMessageContent(item.content);
+    return (
+      <View style={[styles.messageRow, item.role === 'user' ? styles.userMessageRow : styles.assistantMessageRow]}>
+        <View style={[styles.messageBubble, item.role === 'user' ? styles.userMessageBubble : styles.assistantMessageBubble]}>
+          <Text style={item.role === 'user' ? styles.userMessageText : styles.assistantMessageText} selectable>
+            {formattedContent}
+          </Text>
         {item.role === 'assistant' && item.metrics && (
           <View style={styles.metricsContainer}>
             {item.metrics.inputTokens !== undefined && (
@@ -601,7 +611,8 @@ export default function FullAppScreen() {
         )}
       </View>
     </View>
-  );
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -644,7 +655,7 @@ export default function FullAppScreen() {
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0} // Adjust this offset as needed
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
       >
         <View style={{ flex: 1, justifyContent: 'flex-end' }}>
           {activeTab === 'chat' && (
@@ -736,26 +747,26 @@ export default function FullAppScreen() {
               </View>
               
               <View style={styles.imageSettingsRow}>
-                <Text style={styles.imageSettingsLabel}>Steps: {settings.imageSteps}</Text>
+                <Text style={styles.imageSettingsLabel}>Steps: {Math.min(settings.imageSteps || 8, 8)}</Text>
                 <View style={styles.sliderContainer}>
-                  <Text style={styles.sliderValue}>10</Text>
+                  <Text style={styles.sliderValue}>1</Text>
                   <Slider
                     style={styles.slider}
-                    minimumValue={10}
-                    maximumValue={50}
+                    minimumValue={1}
+                    maximumValue={8}
                     step={1}
-                    value={settings.imageSteps}
+                    value={Math.min(settings.imageSteps || 8, 8)}
                     onValueChange={(value) => updateSettings({ imageSteps: Math.round(value) })}
                     minimumTrackTintColor={palette.neon.pink}
                     maximumTrackTintColor={palette.border}
                     thumbTintColor={palette.neon.pink}
                   />
-                  <Text style={styles.sliderValue}>50</Text>
+                  <Text style={styles.sliderValue}>8</Text>
                 </View>
               </View>
               
               <View style={styles.imageSettingsRow}>
-                <Text style={styles.imageSettingsLabel}>Guidance: {settings.imageGuidanceScale}</Text>
+                <Text style={styles.imageSettingsLabel}>CFG Scale: {settings.imageGuidanceScale}</Text>
                 <View style={styles.sliderContainer}>
                   <Text style={styles.sliderValue}>1</Text>
                   <Slider
@@ -775,7 +786,7 @@ export default function FullAppScreen() {
             </View>
           )}
 
-          <Animated.View style={[styles.composer, { transform: [{ translateY: activeTab === 'chat' ? composerY : 0 }] }]}>
+          <View style={styles.composer}>
             {activeTab === 'chat' ? (
               <>
                 <TextInput
@@ -820,7 +831,7 @@ export default function FullAppScreen() {
                 </TouchableOpacity>
               </>
             )}
-          </Animated.View>
+          </View>
         </View>
       </KeyboardAvoidingView>
 
@@ -1114,8 +1125,8 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: space.md,
-        paddingBottom: space.md,
-        paddingTop: space.md,
+        paddingBottom: space.sm,
+        paddingTop: space.sm,
         width: '100%',
         backgroundColor: palette.background,
     },
