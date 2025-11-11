@@ -93,6 +93,10 @@ export default function SettingsScreen() {
 
     (async () => {
       const stored = await loadStoredSettings<AppSettings>(DEFAULT_SETTINGS);
+      // Validate and clamp imageGuidanceScale to valid range (1-20)
+      if (stored.imageGuidanceScale !== undefined) {
+        stored.imageGuidanceScale = Math.max(1, Math.min(20, stored.imageGuidanceScale));
+      }
       if (isMounted) {
         setSettings((prev) => ({ ...prev, ...stored }));
       }
@@ -106,6 +110,10 @@ export default function SettingsScreen() {
   const updateSettings = useCallback((newSettings: Partial<AppSettings>) => {
     setSettings((prev) => {
       const updated = { ...prev, ...newSettings };
+      // Validate and clamp imageGuidanceScale to valid range (1-20)
+      if (updated.imageGuidanceScale !== undefined) {
+        updated.imageGuidanceScale = Math.max(1, Math.min(20, updated.imageGuidanceScale));
+      }
       void persistSettings(updated);
       return updated;
     });

@@ -111,7 +111,13 @@ export default function FullAppScreen() {
   const tokenCountRef = useRef<number>(0);
 
   useEffect(() => {
-    loadStoredSettings<AppSettings>(DEFAULT_SETTINGS).then(setSettings);
+    loadStoredSettings<AppSettings>(DEFAULT_SETTINGS).then((loadedSettings) => {
+      // Validate and clamp imageGuidanceScale to valid range (1-20)
+      if (loadedSettings.imageGuidanceScale !== undefined) {
+        loadedSettings.imageGuidanceScale = Math.max(1, Math.min(20, loadedSettings.imageGuidanceScale));
+      }
+      setSettings(loadedSettings);
+    });
     loadModels();
   }, []);
 
@@ -141,6 +147,10 @@ export default function FullAppScreen() {
   const updateSettings = useCallback((newSettings: Partial<AppSettings>) => {
     setSettings((prev) => {
       const updated = { ...prev, ...newSettings };
+      // Validate and clamp imageGuidanceScale to valid range (1-20)
+      if (updated.imageGuidanceScale !== undefined) {
+        updated.imageGuidanceScale = Math.max(1, Math.min(20, updated.imageGuidanceScale));
+      }
       void persistSettings(updated);
       return updated;
     });
@@ -514,7 +524,8 @@ export default function FullAppScreen() {
         payload.steps = Math.min(settings.imageSteps, 8); // Enforce max 8
       }
       if (settings.imageGuidanceScale !== undefined) {
-        payload.cfg_scale = settings.imageGuidanceScale; // Use cfg_scale, not guidance_scale
+        // Clamp cfg_scale to valid range (1-20) per Venice API requirements
+        payload.cfg_scale = Math.max(1, Math.min(20, settings.imageGuidanceScale));
       }
 
       const response = await fetch(VENICE_IMAGE_GENERATIONS_ENDPOINT, {
