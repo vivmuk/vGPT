@@ -14,6 +14,8 @@ import {
   ScrollView,
   ActivityIndicator,
   useWindowDimensions,
+  LayoutAnimation,
+  UIManager,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -21,6 +23,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import Slider from '@react-native-community/slider';
+import { BlurView } from 'expo-blur';
 import { DEFAULT_SETTINGS } from '@/constants/settings';
 import { AppSettings } from '@/types/settings';
 import { VeniceModel } from '@/types/venice';
@@ -32,6 +35,10 @@ import {
   VENICE_MODELS_ENDPOINT,
   VENICE_IMAGE_GENERATIONS_ENDPOINT,
 } from '@/constants/venice';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 interface Message {
   role: 'user' | 'assistant';
@@ -87,6 +94,13 @@ const space = theme.spacing;
 const radii = theme.radius;
 const fonts = theme.fonts;
 
+const SUGGESTIONS = [
+  "Explain quantum computing",
+  "Write a cyberpunk haiku",
+  "Debug this React code",
+  "Plan a trip to Venice",
+];
+
 export default function FullAppScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -105,6 +119,8 @@ export default function FullAppScreen() {
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
   const [imageError, setImageError] = useState<string | null>(null);
   const [showImageSettings, setShowImageSettings] = useState(false);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  
   const flatListRef = useRef<FlatList>(null);
   const activeRequestControllerRef = useRef<AbortController | null>(null);
   const responseStartTimeRef = useRef<number>(0);
@@ -122,13 +138,27 @@ export default function FullAppScreen() {
   }, []);
 
   useEffect(() => {
+    const interval = setInterval(() => {
+      loadStoredSettings<AppSettings>(DEFAULT_SETTINGS).then((loadedSettings) => {
+        if (JSON.stringify(loadedSettings) !== JSON.stringify(settings)) {
+           if (loadedSettings.imageGuidanceScale !== undefined) {
+            loadedSettings.imageGuidanceScale = Math.max(1, Math.min(20, loadedSettings.imageGuidanceScale));
+          }
+          setSettings(loadedSettings);
+        }
+      });
+    }, 1000); 
+    return () => clearInterval(interval);
+  }, [settings]);
+
+  useEffect(() => {
     return () => {
       activeRequestControllerRef.current?.abort();
     };
   }, []);
 
-  const textModels = useMemo(() => 
-    models.filter((model) => {
+    const textModels = useMemo(() => 
+    models.filter((model: VeniceModel) => {
       const modelType = model.type?.toLowerCase() ?? '';
       return modelType !== 'image' && !isImageModel(model);
     }), 
@@ -136,18 +166,16 @@ export default function FullAppScreen() {
   );
 
   const imageModels = useMemo(() => {
-    const filtered = models.filter((model) => isImageModel(model));
-    // Debug: log if no image models found
+    const filtered = models.filter((model: VeniceModel) => isImageModel(model));
     if (filtered.length === 0 && models.length > 0) {
-      console.log('No image models found. Available model types:', models.map(m => ({ id: m.id, type: m.type, capabilities: m.model_spec?.capabilities })));
+      console.log('No image models found.');
     }
     return filtered;
   }, [models]);
 
   const updateSettings = useCallback((newSettings: Partial<AppSettings>) => {
-    setSettings((prev) => {
+    setSettings((prev: AppSettings) => {
       const updated = { ...prev, ...newSettings };
-      // Validate and clamp imageGuidanceScale to valid range (1-20)
       if (updated.imageGuidanceScale !== undefined) {
         updated.imageGuidanceScale = Math.max(1, Math.min(20, updated.imageGuidanceScale));
       }
@@ -159,15 +187,12 @@ export default function FullAppScreen() {
   const loadModels = useCallback(async () => {
     setIsLoadingModels(true);
     try {
-      // Load all models (text models)
       const textResponse = await fetch(VENICE_MODELS_ENDPOINT, {
         method: 'GET',
         headers: { Authorization: `Bearer ${VENICE_API_KEY}` },
       });
 
-      if (!textResponse.ok) {
-        throw new Error(`Venice API error: ${textResponse.status}`);
-      }
+      if (!textResponse.ok) throw new Error(`Venice API error: ${textResponse.status}`);
 
       const textData = await textResponse.json();
       const textModelsList: VeniceModel[] = Array.isArray(textData?.data)
@@ -176,7 +201,6 @@ export default function FullAppScreen() {
         ? textData.models
         : [];
 
-      // Load image models separately with type=image query parameter
       const imageResponse = await fetch(`${VENICE_MODELS_ENDPOINT}?type=image`, {
         method: 'GET',
         headers: { Authorization: `Bearer ${VENICE_API_KEY}` },
@@ -190,18 +214,12 @@ export default function FullAppScreen() {
           : Array.isArray(imageData?.models)
           ? imageData.models
           : [];
-      } else {
-        console.warn('Failed to load image models:', imageResponse.status);
       }
 
-      // Combine all models
       const allModels = [...textModelsList, ...imageModelsList];
       setModels(allModels);
-      
-      console.log(`Loaded ${textModelsList.length} text models and ${imageModelsList.length} image models`);
     } catch (error) {
       console.error('Failed to load models:', error);
-      Alert.alert('Error', 'Failed to load available models');
     } finally {
       setIsLoadingModels(false);
     }
@@ -236,15 +254,44 @@ export default function FullAppScreen() {
     setShowModelPicker(false);
   }, [updateSettings]);
 
-  // Composer stays at bottom - no animation needed
+  const scrollToBottom = () => {
+    flatListRef.current?.scrollToEnd({ animated: true });
+    setShowScrollToBottom(false);
+  };
 
-  useEffect(() => {
-    if (messages.length > 0) {
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: true });
-      }, 100);
+  const handleScroll = (event: any) => {
+    const offsetY = event.nativeEvent.contentOffset.y;
+    const contentHeight = event.nativeEvent.contentSize.height;
+    const layoutHeight = event.nativeEvent.layoutMeasurement.height;
+
+    if (contentHeight - layoutHeight - offsetY > 100) {
+      setShowScrollToBottom(true);
+    } else {
+      setShowScrollToBottom(false);
     }
-  }, [messages.length]);
+  };
+
+  const handleClearChat = () => {
+    Alert.alert(
+      'Clear Chat',
+      'Are you sure you want to clear the conversation history?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Clear', 
+          style: 'destructive', 
+          onPress: () => {
+            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+            setMessages([]);
+          }
+        }
+      ]
+    );
+  };
+
+  const handleSuggestionPress = (suggestion: string) => {
+    setMessage(suggestion);
+  };
 
   const handleSend = async () => {
     if (!message.trim() || isLoading) return;
@@ -259,13 +306,14 @@ export default function FullAppScreen() {
       id: Date.now().toString(),
     };
 
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     const conversationMessages = [...messages, newUserMessage];
     setMessages((prev) => [...prev, newUserMessage]);
 
     let assistantMessageId: string | null = null;
 
     try {
-      const conversationHistory = conversationMessages.map((msg) => ({
+      const conversationHistory = conversationMessages.map((msg: Message) => ({
         role: msg.role,
         content: msg.content,
       }));
@@ -276,12 +324,12 @@ export default function FullAppScreen() {
         stream: true,
         venice_parameters: {
           character_slug: 'venice',
-          strip_thinking_response: false,
+          strip_thinking_response: settings.stripThinking,
           disable_thinking: settings.disableThinking,
           enable_web_search: settings.webSearch,
           enable_web_citations: settings.webCitations,
           include_search_results_in_stream: settings.includeSearchResults,
-          include_venice_system_prompt: true,
+          include_venice_system_prompt: settings.includeVeniceSystemPrompt,
         },
       };
 
@@ -323,11 +371,12 @@ export default function FullAppScreen() {
         id: assistantMessageId,
       };
 
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setMessages((prev) => [...prev, placeholderMessage]);
 
       const updateAssistantMessage = (partial: Partial<Message>) => {
         if (!assistantMessageId) return;
-        setMessages((prev) =>
+        setMessages((prev: Message[]) =>
           prev.map((msg) => (msg.id === assistantMessageId ? { ...msg, ...partial } : msg))
         );
       };
@@ -358,7 +407,6 @@ export default function FullAppScreen() {
                 const parsed = JSON.parse(data);
                 const choice = parsed?.choices?.[0];
                 
-                // Capture usage data when available (usually in final chunk)
                 if (parsed?.usage) {
                   finalUsage = parsed.usage;
                   tokenCountRef.current = finalUsage.total_tokens || finalUsage.completion_tokens || tokenCountRef.current;
@@ -366,7 +414,6 @@ export default function FullAppScreen() {
                 
                 if (choice?.delta?.content) {
                   rawAssistantContent += choice.delta.content;
-                  // Estimate tokens for streaming display (rough approximation: 1 token ≈ 4 characters)
                   const newTokens = Math.ceil(choice.delta.content.length / 4);
                   tokenCountRef.current += newTokens;
                   
@@ -395,7 +442,6 @@ export default function FullAppScreen() {
 
         reader.releaseLock?.();
         
-        // Final metrics calculation after stream completes
         const responseTime = (Date.now() - responseStartTimeRef.current) / 1000;
         const currentModel = models.find(m => m.id === settings.model);
         const inputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.input);
@@ -405,10 +451,8 @@ export default function FullAppScreen() {
         let outputTokens = finalUsage?.completion_tokens;
         let totalTokens = finalUsage?.total_tokens;
         
-        // If usage data not available, estimate from content
         if (!inputTokens || !outputTokens) {
           const estimatedOutputTokens = Math.ceil(rawAssistantContent.length / 4);
-          // Estimate input tokens from conversation history
           const conversationText = conversationHistory.map(m => m.content).join(' ');
           const estimatedInputTokens = Math.ceil(conversationText.length / 4);
           
@@ -420,12 +464,8 @@ export default function FullAppScreen() {
         const tokensPerSecond = responseTime > 0 && totalTokens ? totalTokens / responseTime : 0;
         
         let cost = 0;
-        if (inputPrice && inputTokens) {
-          cost += (inputPrice * inputTokens) / 1_000_000;
-        }
-        if (outputPrice && outputTokens) {
-          cost += (outputPrice * outputTokens) / 1_000_000;
-        }
+        if (inputPrice && inputTokens) cost += (inputPrice * inputTokens) / 1_000_000;
+        if (outputPrice && outputTokens) cost += (outputPrice * outputTokens) / 1_000_000;
         
         updateAssistantMessage({
           metrics: {
@@ -449,17 +489,11 @@ export default function FullAppScreen() {
         
         let cost = 0;
         if (usage) {
-          if (inputPrice && usage.prompt_tokens) {
-            cost += (inputPrice * usage.prompt_tokens) / 1_000_000;
-          }
-          if (outputPrice && usage.completion_tokens) {
-            cost += (outputPrice * usage.completion_tokens) / 1_000_000;
-          }
+          if (inputPrice && usage.prompt_tokens) cost += (inputPrice * usage.prompt_tokens) / 1_000_000;
+          if (outputPrice && usage.completion_tokens) cost += (outputPrice * usage.completion_tokens) / 1_000_000;
         }
         
-        const tokensPerSecond = usage && responseTime > 0 
-          ? (usage.total_tokens || 0) / responseTime 
-          : 0;
+        const tokensPerSecond = usage && responseTime > 0 ? (usage.total_tokens || 0) / responseTime : 0;
         
         updateAssistantMessage({ 
           content: rawAssistantContent || "Sorry, I couldn't generate a response.",
@@ -481,7 +515,7 @@ export default function FullAppScreen() {
         : 'Something went wrong. Please try again.';
 
       if (assistantMessageId) {
-        setMessages((prev) =>
+        setMessages((prev: Message[]) =>
           prev.map((msg) =>
             msg.id === assistantMessageId
               ? { ...msg, content: fallbackText }
@@ -519,12 +553,10 @@ export default function FullAppScreen() {
         hide_watermark: false,
       };
       
-      // Add steps (max 8) and cfg_scale (not guidance_scale)
       if (settings.imageSteps !== undefined) {
-        payload.steps = Math.min(settings.imageSteps, 8); // Enforce max 8
+        payload.steps = Math.min(settings.imageSteps, 8);
       }
       if (settings.imageGuidanceScale !== undefined) {
-        // Clamp cfg_scale to valid range (1-20) per Venice API requirements
         payload.cfg_scale = Math.max(1, Math.min(20, settings.imageGuidanceScale));
       }
 
@@ -565,7 +597,8 @@ export default function FullAppScreen() {
         height: payload.height,
       };
 
-      setGeneratedImages((prev) => [generated, ...prev]);
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setGeneratedImages((prev: GeneratedImage[]) => [generated, ...prev]);
       setImagePrompt('');
     } catch (error) {
       console.error('Failed to generate image:', error);
@@ -575,129 +608,168 @@ export default function FullAppScreen() {
     }
   };
 
-  const formatMessageContent = (content: string): string => {
-    // Remove markdown formatting, preserve line breaks and basic structure
-    let formatted = content
-      .replace(/\*\*(.*?)\*\*/g, '$1') // Remove bold
-      .replace(/\*(.*?)\*/g, '$1') // Remove italic
-      .replace(/`(.*?)`/g, '$1') // Remove inline code
-      .replace(/```[\s\S]*?```/g, (match) => {
-        // Remove code blocks but preserve content
-        return match.replace(/```[a-z]*\n?/g, '').replace(/```/g, '');
-      })
-      .replace(/#{1,6}\s+(.*?)$/gm, '$1') // Remove headers
-      .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') // Remove links, keep text
-      .replace(/\n{3,}/g, '\n\n') // Replace 3+ line breaks with 2
-      .trim();
-    
-    return formatted;
+  const formatMessageContent = (content: string): React.ReactNode => {
+    const parts = content.split(/(```[\s\S]*?```)/g);
+    return parts.map((part, index) => {
+      if (part.startsWith('```') && part.endsWith('```')) {
+        const codeContent = part.replace(/^```[a-z]*\n?/, '').replace(/```$/, '');
+        return (
+          <View key={index} style={styles.codeBlock}>
+            <Text style={styles.codeText}>{codeContent}</Text>
+          </View>
+        );
+      }
+      
+      const text = part
+        .replace(/\*\*(.*?)\*\*/g, '$1')
+        .replace(/\*(.*?)\*/g, '$1')
+        .replace(/`(.*?)`/g, '$1')
+        .replace(/#{1,6}\s+(.*?)$/gm, '$1')
+        .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1')
+        .trim();
+      
+      if (!text) return null;
+      return <Text key={index} style={styles.messageText}>{text}</Text>;
+    });
   };
 
   const renderMessageItem = ({ item }: { item: Message }) => {
-    const formattedContent = formatMessageContent(item.content);
     return (
       <View style={[styles.messageRow, item.role === 'user' ? styles.userMessageRow : styles.assistantMessageRow]}>
         <View style={[styles.messageBubble, item.role === 'user' ? styles.userMessageBubble : styles.assistantMessageBubble]}>
-          <Text style={item.role === 'user' ? styles.userMessageText : styles.assistantMessageText} selectable>
-            {formattedContent}
-          </Text>
-        {item.role === 'assistant' && item.metrics && (
-          <View style={styles.metricsContainer}>
-            {item.metrics.inputTokens !== undefined && (
-              <Text style={styles.metricText}>📥 {item.metrics.inputTokens} in</Text>
-            )}
-            {item.metrics.outputTokens !== undefined && (
-              <Text style={styles.metricText}>📤 {item.metrics.outputTokens} out</Text>
-            )}
-            {item.metrics.tokensPerSecond !== undefined && (
-              <Text style={styles.metricText}>⚡ {item.metrics.tokensPerSecond} tok/s</Text>
-            )}
-            {item.metrics.responseTime !== undefined && (
-              <Text style={styles.metricText}>⏱️ {item.metrics.responseTime}s</Text>
-            )}
-            {item.metrics.cost !== undefined && item.metrics.cost > 0 && (
-              <Text style={styles.metricText}>💰 ${item.metrics.cost.toFixed(4)}</Text>
-            )}
+          <View>
+             {formatMessageContent(item.content)}
           </View>
-        )}
+          
+          {item.role === 'assistant' && item.metrics && (
+            <View style={styles.metricsContainer}>
+              {item.metrics.inputTokens !== undefined && (
+                <Text style={styles.metricText}>📥 {item.metrics.inputTokens}</Text>
+              )}
+              {item.metrics.outputTokens !== undefined && (
+                <Text style={styles.metricText}>📤 {item.metrics.outputTokens}</Text>
+              )}
+              {item.metrics.tokensPerSecond !== undefined && (
+                <Text style={styles.metricText}>⚡ {item.metrics.tokensPerSecond}/s</Text>
+              )}
+              {item.metrics.responseTime !== undefined && (
+                <Text style={styles.metricText}>⏱️ {item.metrics.responseTime}s</Text>
+              )}
+              {item.metrics.cost !== undefined && item.metrics.cost > 0 && (
+                <Text style={styles.metricText}>💰 ${item.metrics.cost.toFixed(4)}</Text>
+              )}
+            </View>
+          )}
+        </View>
       </View>
-    </View>
     );
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <StatusBar style="light" />
       
-      {/* Header is now always visible */}
-      <View style={styles.header}>
-        <View style={styles.logo}>
-          <Text style={styles.logoIcon}>✨</Text>
-          <Text style={styles.logoText}>vGPT</Text>
+      {/* Glass Header */}
+      <BlurView intensity={80} tint="dark" style={[styles.header, { paddingTop: insets.top + space.sm }]}>
+        <View style={styles.headerContent}>
+          <View style={styles.logo}>
+            <Text style={styles.logoIcon}>✨</Text>
+            <Text style={styles.logoText}>vGPT</Text>
+          </View>
+          <View style={styles.headerRight}>
+            <TouchableOpacity 
+              style={styles.modelSelector} 
+              onPress={() => setShowModelPicker(true)}
+            >
+              <Text style={styles.modelText} numberOfLines={1}>
+                {activeTab === 'chat' 
+                  ? getModelDisplayName(settings.model)
+                  : getModelDisplayName(settings.imageModel)}
+              </Text>
+              <Ionicons name="chevron-down" size={14} color={palette.neon.cyan} />
+            </TouchableOpacity>
+            
+            {activeTab === 'chat' && messages.length > 0 && (
+              <TouchableOpacity style={styles.iconButton} onPress={handleClearChat}>
+                <Ionicons name="trash-outline" size={20} color={palette.danger} />
+              </TouchableOpacity>
+            )}
+            
+            <TouchableOpacity style={styles.iconButton} onPress={() => router.push('/settings')}>
+              <Ionicons name="settings-outline" size={20} color={palette.textSecondary} />
+            </TouchableOpacity>
+          </View>
         </View>
-        <View style={styles.headerRight}>
-          <TouchableOpacity 
-            style={styles.modelSelector} 
-            onPress={() => setShowModelPicker(true)}
-          >
-            <Text style={styles.modelText} numberOfLines={1}>
-              {activeTab === 'chat' 
-                ? getModelDisplayName(settings.model)
-                : getModelDisplayName(settings.imageModel)}
-            </Text>
-            <Ionicons name="chevron-down" size={16} color={palette.neon.cyan} />
+        
+        <View style={styles.tabSwitcher}>
+          <TouchableOpacity style={[styles.tab, activeTab === 'chat' && styles.activeTab]} onPress={() => setActiveTab('chat')}>
+            <Text style={[styles.tabText, activeTab === 'chat' && styles.activeTabText]}>Chat</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.headerButton} onPress={() => router.push('/settings')}>
-            <Ionicons name="settings-outline" size={22} color={palette.textSecondary} />
+          <TouchableOpacity style={[styles.tab, activeTab === 'image' && styles.activeTab]} onPress={() => setActiveTab('image')}>
+            <Text style={[styles.tabText, activeTab === 'image' && styles.activeTabText]}>Create</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </BlurView>
 
-      <View style={styles.tabSwitcher}>
-        <TouchableOpacity style={[styles.tab, activeTab === 'chat' && styles.activeTab]} onPress={() => setActiveTab('chat')}>
-          <Text style={styles.tabText}>Chat</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.tab, activeTab === 'image' && styles.activeTab]} onPress={() => setActiveTab('image')}>
-          <Text style={styles.tabText}>Images</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* KeyboardAvoidingView now only wraps the content that needs to move */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
       >
-        <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+        <View style={{ flex: 1 }}>
           {activeTab === 'chat' && (
             <View style={styles.chatContainer}>
-              {messages.length === 0 && !isLoading ? (
-                <View style={styles.welcomeContainer}>
-                  <Text style={styles.welcomeTitle}>Ready to Chat?</Text>
-                  <Text style={styles.welcomeSubtitle}>Start a conversation below.</Text>
-                </View>
+              {messages.length === 0 ? (
+                <ScrollView contentContainerStyle={styles.welcomeScroll}>
+                  <View style={styles.welcomeContainer}>
+                    <View style={styles.welcomeHero}>
+                      <Text style={styles.welcomeIcon}>💬</Text>
+                      <Text style={styles.welcomeTitle}>How can I help?</Text>
+                    </View>
+                    <View style={styles.suggestionsGrid}>
+                      {SUGGESTIONS.map((suggestion, index) => (
+                        <TouchableOpacity 
+                          key={index} 
+                          style={styles.suggestionChip}
+                          onPress={() => handleSuggestionPress(suggestion)}
+                        >
+                          <Text style={styles.suggestionText}>{suggestion}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                </ScrollView>
               ) : (
                 <FlatList
                   ref={flatListRef}
                   data={messages}
                   renderItem={renderMessageItem}
                   keyExtractor={(item) => item.id}
-                  contentContainerStyle={styles.listContentContainer}
-                  onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+                  contentContainerStyle={[
+                    styles.listContentContainer, 
+                    { paddingTop: 140, paddingBottom: 120 } // Adjust for header/composer
+                  ]}
+                  onScroll={handleScroll}
+                  scrollEventThrottle={16}
                 />
               )}
-              {isLoading && (
-                <View style={styles.typingIndicator}>
-                  <View style={styles.typingDot} />
-                  <View style={styles.typingDot} />
-                  <View style={styles.typingDot} />
-                </View>
+              
+              {showScrollToBottom && (
+                <TouchableOpacity style={styles.scrollToBottomButton} onPress={scrollToBottom}>
+                  <Ionicons name="arrow-down" size={20} color={palette.textPrimary} />
+                </TouchableOpacity>
               )}
             </View>
           )}
 
           {activeTab === 'image' && (
-            <ScrollView style={styles.imageContainer} contentContainerStyle={styles.imageContent}>
+            <ScrollView 
+              style={styles.imageContainer} 
+              contentContainerStyle={[
+                styles.imageContent,
+                { paddingTop: 140, paddingBottom: 120 }
+              ]}
+            >
               {imageError && (
                 <View style={styles.errorBanner}>
                   <Text style={styles.errorText}>{imageError}</Text>
@@ -705,18 +777,20 @@ export default function FullAppScreen() {
               )}
               {generatedImages.length === 0 ? (
                 <View style={styles.welcomeContainer}>
-                  <Ionicons name="image-outline" size={48} color={palette.neon.pink} />
-                  <Text style={styles.welcomeTitle}>Image Generation</Text>
-                  <Text style={styles.welcomeSubtitle}>Describe the image you want to create.</Text>
+                  <View style={styles.welcomeHero}>
+                    <Text style={styles.welcomeIcon}>🎨</Text>
+                    <Text style={styles.welcomeTitle}>Imagine anything</Text>
+                    <Text style={styles.welcomeSubtitle}>Describe your vision below</Text>
+                  </View>
                 </View>
               ) : (
-                generatedImages.map((item) => (
+                generatedImages.map((item: GeneratedImage) => (
                   <View key={item.id} style={styles.generatedCard}>
-                    <Image source={{ uri: item.imageData }} style={styles.generatedImage} contentFit="contain" />
-                    <View style={styles.generatedMeta}>
+                    <Image source={{ uri: item.imageData }} style={styles.generatedImage} contentFit="cover" />
+                    <View style={styles.cardOverlay}>
                       <Text style={styles.generatedPrompt} numberOfLines={2}>{item.prompt}</Text>
                       <Text style={styles.generatedDetails}>
-                        {getModelDisplayName(item.modelId)} • {new Date(item.createdAt).toLocaleTimeString()}
+                        {getModelDisplayName(item.modelId)}
                       </Text>
                     </View>
                   </View>
@@ -724,126 +798,63 @@ export default function FullAppScreen() {
               )}
             </ScrollView>
           )}
+        </View>
 
-          {/* Image Settings Panel - appears above composer */}
+        {/* Floating Composer */}
+        <BlurView intensity={95} tint="dark" style={[styles.composerContainer, { paddingBottom: insets.bottom + space.sm }]}>
           {activeTab === 'image' && showImageSettings && (
-            <View style={styles.imageSettingsPanel}>
-              <View style={styles.imageSettingsRow}>
-                <Text style={styles.imageSettingsLabel}>Size</Text>
-                <View style={styles.imageSizeButtons}>
-                  {[
-                    { label: '512', w: 512, h: 512 },
-                    { label: '1024', w: 1024, h: 1024 },
-                    { label: '1:1', w: 1024, h: 1024 },
-                    { label: '16:9', w: 1024, h: 576 },
-                    { label: '9:16', w: 576, h: 1024 },
-                  ].map((size) => (
-                    <TouchableOpacity
-                      key={size.label}
-                      style={[
-                        styles.imageSizeButton,
-                        settings.imageWidth === size.w && settings.imageHeight === size.h && styles.imageSizeButtonActive
-                      ]}
-                      onPress={() => updateSettings({ imageWidth: size.w, imageHeight: size.h })}
-                    >
-                      <Text style={[
-                        styles.imageSizeButtonText,
-                        settings.imageWidth === size.w && settings.imageHeight === size.h && styles.imageSizeButtonTextActive
-                      ]}>
-                        {size.label}
-                      </Text>
+            <View style={styles.quickSettings}>
+               {/* Simplified inline settings for quick access */}
+               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.settingsScroll}>
+                  <View style={styles.settingChip}>
+                    <Text style={styles.settingChipLabel}>Size</Text>
+                    <TouchableOpacity onPress={() => updateSettings({ imageWidth: 1024, imageHeight: 1024 })}>
+                      <Text style={[styles.settingChipValue, settings.imageWidth === 1024 && styles.activeSetting]}>1:1</Text>
                     </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-              
-              <View style={styles.imageSettingsRow}>
-                <Text style={styles.imageSettingsLabel}>Steps: {Math.min(settings.imageSteps || 8, 8)}</Text>
-                <View style={styles.sliderContainer}>
-                  <Text style={styles.sliderValue}>1</Text>
-                  <Slider
-                    style={styles.slider}
-                    minimumValue={1}
-                    maximumValue={8}
-                    step={1}
-                    value={Math.min(settings.imageSteps || 8, 8)}
-                    onValueChange={(value) => updateSettings({ imageSteps: Math.round(value) })}
-                    minimumTrackTintColor={palette.neon.pink}
-                    maximumTrackTintColor={palette.border}
-                    thumbTintColor={palette.neon.pink}
-                  />
-                  <Text style={styles.sliderValue}>8</Text>
-                </View>
-              </View>
-              
-              <View style={styles.imageSettingsRow}>
-                <Text style={styles.imageSettingsLabel}>CFG Scale: {settings.imageGuidanceScale}</Text>
-                <View style={styles.sliderContainer}>
-                  <Text style={styles.sliderValue}>1</Text>
-                  <Slider
-                    style={styles.slider}
-                    minimumValue={1}
-                    maximumValue={20}
-                    step={0.5}
-                    value={settings.imageGuidanceScale}
-                    onValueChange={(value) => updateSettings({ imageGuidanceScale: Math.round(value * 10) / 10 })}
-                    minimumTrackTintColor={palette.neon.pink}
-                    maximumTrackTintColor={palette.border}
-                    thumbTintColor={palette.neon.pink}
-                  />
-                  <Text style={styles.sliderValue}>20</Text>
-                </View>
-              </View>
+                    <TouchableOpacity onPress={() => updateSettings({ imageWidth: 576, imageHeight: 1024 })}>
+                      <Text style={[styles.settingChipValue, settings.imageWidth === 576 && styles.activeSetting]}>9:16</Text>
+                    </TouchableOpacity>
+                  </View>
+               </ScrollView>
             </View>
           )}
 
           <View style={styles.composer}>
-            {activeTab === 'chat' ? (
-              <>
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="Message vGPT..."
-                  placeholderTextColor={palette.textMuted}
-                  value={message}
-                  onChangeText={setMessage}
-                  multiline
-                />
-                <TouchableOpacity style={styles.sendButton} onPress={handleSend}>
-                  <Ionicons name="arrow-up-circle" size={32} color={palette.neon.cyan} />
-                </TouchableOpacity>
-              </>
-            ) : (
-              <>
-                <TouchableOpacity 
-                  style={styles.imageSettingsButton}
-                  onPress={() => setShowImageSettings(!showImageSettings)}
-                >
-                  <Ionicons name="options-outline" size={20} color={palette.textSecondary} />
-                </TouchableOpacity>
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="Describe an image..."
-                  placeholderTextColor={palette.textMuted}
-                  value={imagePrompt}
-                  onChangeText={setImagePrompt}
-                  multiline
-                  editable={!isGeneratingImage}
-                />
-                <TouchableOpacity 
-                  style={styles.sendButton}
-                  onPress={handleGenerateImage}
-                  disabled={!imagePrompt.trim() || isGeneratingImage}
-                >
-                  {isGeneratingImage ? (
-                    <ActivityIndicator size="small" color={palette.neon.pink} />
-                  ) : (
-                    <Ionicons name="arrow-up-circle" size={32} color={palette.neon.pink} />
-                  )}
-                </TouchableOpacity>
-              </>
+            {activeTab === 'image' && (
+              <TouchableOpacity 
+                style={styles.composerIconLeft}
+                onPress={() => setShowImageSettings(!showImageSettings)}
+              >
+                <Ionicons name={showImageSettings ? "options" : "options-outline"} size={24} color={palette.textSecondary} />
+              </TouchableOpacity>
             )}
+            
+            <TextInput
+              style={styles.input}
+              placeholder={activeTab === 'chat' ? "Message vGPT..." : "Describe an image..."}
+              placeholderTextColor={palette.textMuted}
+              value={activeTab === 'chat' ? message : imagePrompt}
+              onChangeText={activeTab === 'chat' ? setMessage : setImagePrompt}
+              multiline
+              editable={!isLoading && !isGeneratingImage}
+            />
+            
+            <TouchableOpacity 
+              style={[
+                styles.sendButton, 
+                { backgroundColor: activeTab === 'chat' ? palette.neon.cyan : palette.neon.pink }
+              ]} 
+              onPress={activeTab === 'chat' ? handleSend : handleGenerateImage}
+              disabled={activeTab === 'chat' ? (!message.trim() || isLoading) : (!imagePrompt.trim() || isGeneratingImage)}
+            >
+              {isLoading || isGeneratingImage ? (
+                <ActivityIndicator size="small" color={palette.black} />
+              ) : (
+                <Ionicons name="arrow-up" size={20} color={palette.black} />
+              )}
+            </TouchableOpacity>
           </View>
-        </View>
+        </BlurView>
       </KeyboardAvoidingView>
 
       {/* Model Picker Modal */}
@@ -858,24 +869,22 @@ export default function FullAppScreen() {
               <Text style={styles.modalCancelText}>Cancel</Text>
             </TouchableOpacity>
             <Text style={styles.modalTitle}>
-              {activeTab === 'chat' ? 'Select Chat Model' : 'Select Image Model'}
+              {activeTab === 'chat' ? 'Select Model' : 'Select Image Model'}
             </Text>
             <View style={styles.headerSpacer} />
           </View>
           
           {isLoadingModels ? (
             <View style={styles.loadingContainer}>
-              <ActivityIndicator size="small" color={palette.neon.cyan} />
+              <ActivityIndicator size="small" color={palette.accent} />
               <Text style={styles.loadingText}>Loading models...</Text>
             </View>
           ) : (
             <FlatList
               data={activeTab === 'chat' ? textModels : imageModels}
-              renderItem={({ item }) => {
+              renderItem={({ item }: { item: VeniceModel }) => {
                 const isSelected = (activeTab === 'chat' ? settings.model : settings.imageModel) === item.id;
-                const capabilities = item.model_spec.capabilities || {};
                 const inputUsd = resolveUsdPrice(item.model_spec.pricing?.input);
-                const outputUsd = resolveUsdPrice(item.model_spec.pricing?.output);
                 const generationUsd = resolveUsdPrice(item.model_spec.pricing?.generation);
 
                 return (
@@ -889,445 +898,438 @@ export default function FullAppScreen() {
                         {item.model_spec.beta && <Text style={styles.betaTag}>BETA</Text>}
                       </View>
                       <Text style={styles.modelId}>{item.id}</Text>
-                      <View style={styles.modelCapabilities}>
-                        {capabilities.supportsWebSearch && <Text style={styles.capabilityTag}>🌐 Web</Text>}
-                        {capabilities.supportsReasoning && <Text style={styles.capabilityTag}>🧠 Reasoning</Text>}
-                        {capabilities.optimizedForCode && <Text style={styles.capabilityTag}>💻 Code</Text>}
-                        {capabilities.supportsVision && <Text style={styles.capabilityTag}>👁️ Vision</Text>}
-                        {capabilities.supportsImageGeneration && <Text style={styles.capabilityTag}>🎨 Image</Text>}
-                      </View>
                     </View>
                     <View style={styles.modelPricing}>
                       {activeTab === 'chat' ? (
-                        <>
-                          <Text style={styles.pricingText}>
-                            {inputUsd != null ? `$${inputUsd}/1M in` : '—'}
-                          </Text>
-                          <Text style={styles.pricingText}>
-                            {outputUsd != null ? `$${outputUsd}/1M out` : '—'}
-                          </Text>
-                        </>
+                        <Text style={styles.pricingText}>{inputUsd != null ? `$${inputUsd}/1M` : ''}</Text>
                       ) : (
-                        <Text style={styles.pricingText}>
-                          {generationUsd != null ? `$${generationUsd}/image` : '—'}
-                        </Text>
+                        <Text style={styles.pricingText}>{generationUsd != null ? `$${generationUsd}/img` : ''}</Text>
                       )}
                     </View>
-                    {isSelected && <Ionicons name="checkmark-circle" size={24} color={palette.neon.cyan} />}
+                    {isSelected && <Ionicons name="checkmark-circle" size={24} color={palette.accent} />}
                   </TouchableOpacity>
                 );
               }}
               keyExtractor={(item) => item.id}
               contentContainerStyle={styles.modelList}
-              ListEmptyComponent={
-                <View style={styles.loadingContainer}>
-                  <Text style={styles.emptyModelsText}>
-                    {activeTab === 'chat' ? 'No chat models available.' : 'No image models available.'}
-                  </Text>
-                </View>
-              }
             />
           )}
         </SafeAreaView>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: palette.background,
-    },
-    header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingHorizontal: space.lg,
-        paddingVertical: space.md,
-        borderBottomWidth: 1,
-        borderBottomColor: palette.divider,
-    },
-    logo: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: space.sm,
-    },
-    logoIcon: { fontSize: 24 },
-    logoText: {
-        fontSize: 20,
-        fontFamily: fonts.semibold,
-        color: palette.textPrimary,
-    },
-    headerRight: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: space.sm,
-    },
-    modelSelector: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: palette.surface,
-        paddingHorizontal: space.md,
-        paddingVertical: space.sm,
-        borderRadius: radii.pill,
-        borderWidth: 1,
-        borderColor: palette.neon.cyan,
-        gap: space.xs,
-    },
-    modelText: {
-        fontSize: 14,
-        color: palette.textPrimary,
-        fontFamily: fonts.medium,
-        maxWidth: 120,
-    },
-    headerButton: { padding: space.sm },
-    tabSwitcher: {
-        flexDirection: 'row',
-        justifyContent: 'center',
-        padding: space.sm,
-        gap: space.sm,
-    },
-    tab: {
-        paddingVertical: space.sm,
-        paddingHorizontal: space.lg,
-        borderRadius: radii.pill,
-    },
-    activeTab: {
-        backgroundColor: palette.surface,
-    },
-    tabText: {
-        fontFamily: fonts.medium,
-        color: palette.textSecondary,
-    },
-    chatContainer: {
-        flex: 1,
-    },
-    imageContainer: {
-        flex: 1,
-    },
-    imageContent: {
-        padding: space.lg,
-        paddingBottom: space.xl,
-        gap: space.lg,
-    },
-    errorBanner: {
-        backgroundColor: palette.danger,
-        padding: space.md,
-        borderRadius: radii.md,
-        marginBottom: space.md,
-    },
-    errorText: {
-        color: palette.textPrimary,
-        fontFamily: fonts.medium,
-    },
-    generatedCard: {
-        borderRadius: radii.lg,
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: palette.border,
-        backgroundColor: palette.surface,
-    },
-    generatedImage: {
-        width: '100%',
-        minHeight: 200,
-        backgroundColor: palette.surface,
-    },
-    generatedMeta: {
-        padding: space.md,
-        gap: space.xs,
-    },
-    generatedPrompt: {
-        fontSize: 14,
-        color: palette.textPrimary,
-        fontFamily: fonts.medium,
-    },
-    generatedDetails: {
-        fontSize: 12,
-        color: palette.textMuted,
-        fontFamily: fonts.regular,
-    },
-    typingIndicator: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: space.md,
-        gap: space.xs,
-    },
-    typingDot: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: palette.neon.pink,
-    },
-    listContentContainer: {
-        paddingTop: space.lg,
-        paddingBottom: space.xl,
-        paddingHorizontal: space.lg,
-    },
-    welcomeContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: space.xl,
-        gap: space.md,
-    },
-    welcomeTitle: {
-        fontSize: 32,
-        fontFamily: fonts.bold,
-        color: palette.textPrimary,
-        marginBottom: space.sm,
-        textShadowColor: palette.neon.cyan,
-        textShadowRadius: 10,
-        textAlign: 'center',
-    },
-    welcomeSubtitle: {
-        fontSize: 16,
-        fontFamily: fonts.regular,
-        color: palette.textSecondary,
-        textAlign: 'center',
-    },
-    messageRow: {
-        marginVertical: space.sm,
-        flexDirection: 'row',
-    },
-    userMessageRow: { justifyContent: 'flex-end' },
-    assistantMessageRow: { justifyContent: 'flex-start' },
-    messageBubble: {
-        maxWidth: '85%',
-        padding: space.md,
-        borderRadius: radii.lg,
-        minWidth: 100,
-    },
-    userMessageBubble: {
-        backgroundColor: palette.surface,
-        borderWidth: 1,
-        borderColor: palette.neon.cyan,
-        borderBottomRightRadius: radii.sm,
-    },
-    assistantMessageBubble: {
-        backgroundColor: palette.surface,
-        borderBottomLeftRadius: radii.sm,
-    },
-    userMessageText: {
-        fontSize: 16,
-        color: palette.textPrimary,
-        fontFamily: fonts.regular,
-    },
-    assistantMessageText: {
-        fontSize: 16,
-        color: palette.textPrimary,
-        fontFamily: fonts.regular,
-    },
-    metricsContainer: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        marginTop: space.sm,
-        paddingTop: space.sm,
-        borderTopWidth: 1,
-        borderTopColor: palette.divider,
-        gap: space.sm,
-    },
-    metricText: {
-        fontSize: 11,
-        color: palette.textMuted,
-        fontFamily: fonts.medium,
-    },
-    composer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: space.md,
-        paddingBottom: space.sm,
-        paddingTop: space.sm,
-        width: '100%',
-        backgroundColor: palette.background,
-    },
-    textInput: {
-        flex: 1,
-        minHeight: 48,
-        maxHeight: 120,
-        backgroundColor: palette.surface,
-        borderRadius: radii.pill,
-        borderWidth: 1,
-        borderColor: palette.border,
-        paddingHorizontal: space.lg,
-        paddingVertical: space.md,
-        fontSize: 16,
-        color: palette.textPrimary,
-        marginRight: space.sm,
-    },
-    sendButton: {},
-    imageSettingsButton: {
-        padding: space.sm,
-        marginRight: space.xs,
-    },
-    imageSettingsPanel: {
-        backgroundColor: palette.surface,
-        borderTopWidth: 1,
-        borderTopColor: palette.divider,
-        padding: space.md,
-        gap: space.md,
-    },
-    imageSettingsRow: {
-        gap: space.sm,
-    },
-    imageSettingsLabel: {
-        fontSize: 14,
-        color: palette.textPrimary,
-        fontFamily: fonts.medium,
-    },
-    imageSizeButtons: {
-        flexDirection: 'row',
-        gap: space.sm,
-        flexWrap: 'wrap',
-    },
-    imageSizeButton: {
-        paddingHorizontal: space.md,
-        paddingVertical: space.sm,
-        borderRadius: radii.md,
-        borderWidth: 1,
-        borderColor: palette.border,
-        backgroundColor: palette.background,
-    },
-    imageSizeButtonActive: {
-        borderColor: palette.neon.pink,
-        backgroundColor: palette.accentSoft,
-    },
-    imageSizeButtonText: {
-        fontSize: 12,
-        color: palette.textSecondary,
-        fontFamily: fonts.medium,
-    },
-    imageSizeButtonTextActive: {
-        color: palette.neon.pink,
-    },
-    sliderContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: space.sm,
-    },
-    slider: {
-        flex: 1,
-        height: 40,
-    },
-    sliderValue: {
-        fontSize: 12,
-        color: palette.textMuted,
-        fontFamily: fonts.medium,
-        minWidth: 30,
-    },
-    modalContainer: {
-        flex: 1,
-        backgroundColor: palette.background,
-    },
-    modalHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: space.lg,
-        paddingVertical: space.md,
-        borderBottomWidth: 1,
-        borderBottomColor: palette.divider,
-    },
-    modalCancelText: {
-        fontSize: 16,
-        color: palette.neon.cyan,
-        fontFamily: fonts.medium,
-    },
-    modalTitle: {
-        flex: 1,
-        fontSize: 18,
-        fontFamily: fonts.semibold,
-        color: palette.textPrimary,
-        textAlign: 'center',
-    },
-    headerSpacer: {
-        width: 60,
-    },
-    loadingContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: space.xl,
-    },
-    loadingText: {
-        marginTop: space.md,
-        fontSize: 14,
-        color: palette.textSecondary,
-        fontFamily: fonts.medium,
-    },
-    emptyModelsText: {
-        fontSize: 16,
-        color: palette.textMuted,
-        fontFamily: fonts.medium,
-    },
-    modelList: {
-        paddingVertical: space.md,
-    },
-    modelItem: {
-        backgroundColor: palette.surface,
-        marginHorizontal: space.lg,
-        marginVertical: space.xs,
-        padding: space.lg,
-        borderRadius: radii.lg,
-        flexDirection: 'row',
-        alignItems: 'center',
-        borderWidth: 1,
-        borderColor: palette.border,
-    },
-    selectedModelItem: {
-        borderColor: palette.neon.cyan,
-    },
-    modelInfo: {
-        flex: 1,
-    },
-    modelHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: space.xs,
-        gap: space.sm,
-    },
-    modelName: {
-        fontSize: 16,
-        fontFamily: fonts.semibold,
-        color: palette.textPrimary,
-        flex: 1,
-    },
-    betaTag: {
-        fontSize: 10,
-        fontFamily: fonts.medium,
-        color: palette.neon.cyan,
-        backgroundColor: palette.accentSoft,
-        paddingHorizontal: space.sm,
-        paddingVertical: 2,
-        borderRadius: radii.pill,
-        borderWidth: 1,
-        borderColor: palette.neon.cyan,
-    },
-    modelId: {
-        fontSize: 13,
-        color: palette.textMuted,
-        marginBottom: space.xs,
-        fontFamily: fonts.medium,
-    },
-    modelCapabilities: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: space.xs,
-    },
-    capabilityTag: {
-        fontSize: 12,
-        color: palette.neon.cyan,
-        backgroundColor: palette.accentSoft,
-        paddingHorizontal: space.sm,
-        paddingVertical: 2,
-        borderRadius: radii.pill,
-    },
-    modelPricing: {
-        alignItems: 'flex-end',
-        marginRight: space.md,
-    },
-    pricingText: {
-        fontSize: 12,
-        color: palette.textMuted,
-        fontFamily: fonts.medium,
-    },
+  container: {
+    flex: 1,
+    backgroundColor: palette.background,
+  },
+  header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  headerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: space.lg,
+    paddingBottom: space.md,
+  },
+  logo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+  },
+  logoIcon: { fontSize: 20 },
+  logoText: {
+    fontSize: 18,
+    fontFamily: fonts.bold,
+    color: palette.textPrimary,
+    letterSpacing: -0.5,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  modelSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: space.md,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    gap: space.xs,
+    maxWidth: 160,
+  },
+  modelText: {
+    fontSize: 12,
+    color: palette.textPrimary,
+    fontFamily: fonts.medium,
+    flexShrink: 1,
+  },
+  iconButton: {
+    padding: 6,
+    borderRadius: radii.pill,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  tabSwitcher: {
+    flexDirection: 'row',
+    paddingHorizontal: space.lg,
+    paddingBottom: space.sm,
+    gap: space.lg,
+  },
+  tab: {
+    paddingBottom: space.xs,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  activeTab: {
+    borderBottomColor: palette.accent,
+  },
+  tabText: {
+    fontSize: 14,
+    fontFamily: fonts.medium,
+    color: palette.textMuted,
+  },
+  activeTabText: {
+    color: palette.textPrimary,
+  },
+  chatContainer: {
+    flex: 1,
+  },
+  welcomeScroll: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
+  welcomeContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: space.xl,
+    gap: space.xl,
+  },
+  welcomeHero: {
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  welcomeIcon: {
+    fontSize: 48,
+    marginBottom: space.sm,
+  },
+  welcomeTitle: {
+    fontSize: 28,
+    fontFamily: fonts.bold,
+    color: palette.textPrimary,
+    textAlign: 'center',
+  },
+  welcomeSubtitle: {
+    fontSize: 16,
+    fontFamily: fonts.regular,
+    color: palette.textSecondary,
+    textAlign: 'center',
+  },
+  suggestionsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: space.sm,
+    maxWidth: 400,
+  },
+  suggestionChip: {
+    backgroundColor: palette.surfaceElevated,
+    paddingVertical: space.md,
+    paddingHorizontal: space.lg,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: palette.borderMuted,
+  },
+  suggestionText: {
+    fontSize: 14,
+    color: palette.textSecondary,
+    fontFamily: fonts.medium,
+  },
+  listContentContainer: {
+    paddingHorizontal: space.md,
+  },
+  messageRow: {
+    marginVertical: space.sm,
+    flexDirection: 'row',
+    width: '100%',
+  },
+  userMessageRow: {
+    justifyContent: 'flex-end',
+  },
+  assistantMessageRow: {
+    justifyContent: 'flex-start',
+  },
+  messageBubble: {
+    maxWidth: '85%',
+    padding: space.md,
+    borderRadius: 20,
+  },
+  userMessageBubble: {
+    backgroundColor: 'rgba(0, 255, 255, 0.15)', // Subtle cyan tint
+    borderWidth: 1,
+    borderColor: 'rgba(0, 255, 255, 0.3)',
+    borderBottomRightRadius: 4,
+  },
+  assistantMessageBubble: {
+    backgroundColor: palette.surfaceElevated,
+    borderBottomLeftRadius: 4,
+  },
+  messageText: {
+    fontSize: 16,
+    color: palette.textPrimary,
+    lineHeight: 24,
+    fontFamily: fonts.regular,
+  },
+  metricsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: space.sm,
+    gap: space.sm,
+    opacity: 0.7,
+  },
+  metricText: {
+    fontSize: 10,
+    color: palette.textMuted,
+    fontFamily: fonts.medium,
+  },
+  codeBlock: {
+    backgroundColor: '#000',
+    borderRadius: radii.md,
+    padding: space.md,
+    marginVertical: space.sm,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  codeText: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 13,
+    color: '#ddd',
+  },
+  composerContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: space.md,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.05)',
+  },
+  composer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: palette.borderMuted,
+    padding: space.xs,
+  },
+  composerIconLeft: {
+    padding: space.sm,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  input: {
+    flex: 1,
+    color: palette.textPrimary,
+    fontSize: 16,
+    fontFamily: fonts.regular,
+    paddingVertical: space.md,
+    paddingHorizontal: space.sm,
+    maxHeight: 100,
+  },
+  sendButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    margin: 4,
+  },
+  quickSettings: {
+    marginBottom: space.sm,
+  },
+  settingsScroll: {
+    maxHeight: 40,
+  },
+  settingChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: palette.surfaceElevated,
+    borderRadius: radii.md,
+    padding: space.sm,
+    gap: space.md,
+  },
+  settingChipLabel: {
+    fontSize: 12,
+    color: palette.textMuted,
+    fontFamily: fonts.medium,
+  },
+  settingChipValue: {
+    fontSize: 12,
+    color: palette.textSecondary,
+    fontFamily: fonts.medium,
+  },
+  activeSetting: {
+    color: palette.accent,
+    fontFamily: fonts.bold,
+  },
+  imageContainer: {
+    flex: 1,
+  },
+  imageContent: {
+    paddingHorizontal: space.lg,
+    gap: space.lg,
+  },
+  generatedCard: {
+    borderRadius: radii.xl,
+    overflow: 'hidden',
+    backgroundColor: palette.surface,
+    height: 400,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  generatedImage: {
+    width: '100%',
+    height: '100%',
+  },
+  cardOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: space.lg,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+  },
+  generatedPrompt: {
+    fontSize: 14,
+    color: palette.white,
+    fontFamily: fonts.medium,
+    marginBottom: space.xs,
+  },
+  generatedDetails: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.7)',
+  },
+  errorBanner: {
+    backgroundColor: 'rgba(255, 0, 0, 0.1)',
+    borderWidth: 1,
+    borderColor: palette.danger,
+    padding: space.md,
+    borderRadius: radii.md,
+    marginHorizontal: space.lg,
+    marginTop: space.md,
+  },
+  errorText: {
+    color: palette.danger,
+    fontSize: 14,
+  },
+  scrollToBottomButton: {
+    position: 'absolute',
+    bottom: 100,
+    right: space.lg,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: palette.surfaceElevated,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: palette.border,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: palette.background,
+  },
+  loadingText: {
+    color: palette.textSecondary,
+    marginTop: space.md,
+  },
+  emptyModelsText: {
+    color: palette.textMuted,
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: palette.backgroundMuted,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: space.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.divider,
+  },
+  modalTitle: {
+    fontSize: 18,
+    color: palette.textPrimary,
+    fontFamily: fonts.semibold,
+  },
+  modalCancelText: {
+    color: palette.accent,
+    fontSize: 16,
+  },
+  headerSpacer: { width: 50 },
+  modelList: {
+    padding: space.md,
+  },
+  modelItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: space.lg,
+    backgroundColor: palette.surfaceElevated,
+    borderRadius: radii.lg,
+    marginBottom: space.sm,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  selectedModelItem: {
+    borderColor: palette.accent,
+    backgroundColor: 'rgba(0, 255, 255, 0.05)',
+  },
+  modelInfo: { flex: 1 },
+  modelHeader: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  modelName: { fontSize: 16, color: palette.textPrimary, fontFamily: fonts.medium },
+  betaTag: {
+    fontSize: 10,
+    color: palette.black,
+    backgroundColor: palette.accent,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radii.pill,
+    overflow: 'hidden',
+  },
+  modelId: { fontSize: 12, color: palette.textMuted, marginTop: 2 },
+  modelPricing: { alignItems: 'flex-end' },
+  pricingText: { fontSize: 12, color: palette.textMuted },
+  typingIndicator: {
+    flexDirection: 'row',
+    padding: space.lg,
+    gap: 4,
+  },
+  typingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: palette.accent,
+    opacity: 0.6,
+  },
 });

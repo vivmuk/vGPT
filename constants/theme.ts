@@ -43,6 +43,9 @@ export const theme = {
     success: palette.neon_green,
     warning: palette.neon_orange,
     danger: palette.neon_pink,
+    
+    black: palette.black,
+    white: palette.white,
 
     // Neons for multi-color effects if needed
     neon: {
@@ -64,6 +67,7 @@ export const theme = {
     sm: 4,
     md: 8,
     lg: 16,
+    xl: 24,
     pill: 9999,
   },
   fonts: {

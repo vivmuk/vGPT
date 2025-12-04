@@ -11,6 +11,7 @@ export interface AppSettings {
   webSearch: WebSearchMode;
   webCitations: boolean;
   includeSearchResults: boolean;
+  includeVeniceSystemPrompt: boolean;
   stripThinking: boolean;
   disableThinking: boolean;
   imageModel: string;

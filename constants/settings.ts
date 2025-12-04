@@ -11,6 +11,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webSearch: 'auto',
   webCitations: true,
   includeSearchResults: true,
+  includeVeniceSystemPrompt: true,
   stripThinking: false,
   disableThinking: false,
   imageModel: '',

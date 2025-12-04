@@ -9,7 +9,8 @@ import {
   Modal,
   FlatList,
   Platform,
-  ActivityIndicator
+  ActivityIndicator,
+  Switch
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -98,7 +99,7 @@ export default function SettingsScreen() {
         stored.imageGuidanceScale = Math.max(1, Math.min(20, stored.imageGuidanceScale));
       }
       if (isMounted) {
-        setSettings((prev) => ({ ...prev, ...stored }));
+        setSettings((prev: AppSettings) => ({ ...prev, ...stored }));
       }
     })();
 
@@ -108,7 +109,7 @@ export default function SettingsScreen() {
   }, []);
 
   const updateSettings = useCallback((newSettings: Partial<AppSettings>) => {
-    setSettings((prev) => {
+    setSettings((prev: AppSettings) => {
       const updated = { ...prev, ...newSettings };
       // Validate and clamp imageGuidanceScale to valid range (1-20)
       if (updated.imageGuidanceScale !== undefined) {
@@ -167,9 +168,23 @@ export default function SettingsScreen() {
 
   const handleModelSelect = useCallback((modelId: string) => {
     const selectedModel = models.find((m: VeniceModel) => m.id === modelId);
-    const defaultMaxTokens = getModelDefaultMaxTokens(selectedModel);
+    if (!selectedModel) return;
 
     const updates: Partial<AppSettings> = { model: modelId };
+
+    // Apply model defaults from constraints
+    const constraints = selectedModel.model_spec.constraints || {};
+
+    // Temperature
+    const defaultTemp = getConstraintNumber(constraints.temperature);
+    if (defaultTemp !== undefined) updates.temperature = defaultTemp;
+
+    // Top P
+    const defaultTopP = getConstraintNumber(constraints.top_p);
+    if (defaultTopP !== undefined) updates.topP = defaultTopP;
+    
+    // Max Tokens
+    const defaultMaxTokens = getModelDefaultMaxTokens(selectedModel);
     if (defaultMaxTokens && defaultMaxTokens > 0) {
       updates.maxTokens = defaultMaxTokens;
     }
@@ -178,6 +193,35 @@ export default function SettingsScreen() {
     setShowModelPicker(false);
   }, [models, updateSettings]);
 
+  const resetToDefaults = useCallback(() => {
+    const selectedModel = models.find((m: VeniceModel) => m.id === settings.model);
+    if (!selectedModel) return;
+
+    const constraints = selectedModel.model_spec.constraints || {};
+    const updates: Partial<AppSettings> = {};
+
+    const defaultTemp = getConstraintNumber(constraints.temperature);
+    if (defaultTemp !== undefined) updates.temperature = defaultTemp;
+
+    const defaultTopP = getConstraintNumber(constraints.top_p);
+    if (defaultTopP !== undefined) updates.topP = defaultTopP;
+
+    const defaultMaxTokens = getModelDefaultMaxTokens(selectedModel);
+    if (defaultMaxTokens !== undefined) updates.maxTokens = defaultMaxTokens;
+    
+    // Other defaults usually global but can be reset to DEFAULT_SETTINGS if model specific not found
+    if (updates.temperature === undefined) updates.temperature = DEFAULT_SETTINGS.temperature;
+    if (updates.topP === undefined) updates.topP = DEFAULT_SETTINGS.topP;
+    if (updates.maxTokens === undefined) updates.maxTokens = DEFAULT_SETTINGS.maxTokens;
+    
+    updates.minP = DEFAULT_SETTINGS.minP;
+    updates.topK = DEFAULT_SETTINGS.topK;
+    updates.repetitionPenalty = DEFAULT_SETTINGS.repetitionPenalty;
+
+    updateSettings(updates);
+    Alert.alert('Reset', 'Settings restored to model defaults.');
+  }, [models, settings.model, updateSettings]);
+
   const getModelDisplayName = (modelId: string) => {
     const model = models.find((m: VeniceModel) => m.id === modelId);
     return model?.model_spec.name || modelId;
@@ -185,21 +229,6 @@ export default function SettingsScreen() {
 
   const currentModel = useMemo(() => models.find((m: VeniceModel) => m.id === settings.model), [models, settings.model]);
   const currentModelMaxTokens = useMemo(() => getModelDefaultMaxTokens(currentModel), [currentModel]);
-
-  useEffect(() => {
-    if (!currentModel) return;
-    const defaultMaxTokens = currentModelMaxTokens;
-    if (!defaultMaxTokens) return;
-
-    const shouldUpdate =
-      settings.maxTokens === 4096 ||
-      settings.maxTokens == null ||
-      settings.maxTokens > defaultMaxTokens;
-
-    if (shouldUpdate && settings.maxTokens !== defaultMaxTokens) {
-      updateSettings({ maxTokens: defaultMaxTokens });
-    }
-  }, [currentModel, currentModelMaxTokens, settings.maxTokens]);
 
   const getSettingExplanation = (key: string) => {
     const explanations: Record<string, string> = {
@@ -373,6 +402,15 @@ export default function SettingsScreen() {
           </View>
         </TouchableOpacity>
 
+        {/* Reset Defaults Button */}
+        <TouchableOpacity 
+          style={styles.resetButton}
+          onPress={resetToDefaults}
+        >
+           <Ionicons name="refresh-circle-outline" size={24} color={palette.accentStrong} />
+           <Text style={styles.resetButtonText}>Reset to Model Defaults</Text>
+        </TouchableOpacity>
+
         {/* Web Search */}
         <View style={styles.settingContainer}>
           <View style={styles.settingTitleContainer}>
@@ -402,6 +440,38 @@ export default function SettingsScreen() {
                 </Text>
               </TouchableOpacity>
             ))}
+          </View>
+        </View>
+
+        {/* System Prompt & Venice Features */}
+        <View style={styles.settingContainer}>
+          <View style={styles.settingHeader}>
+            <View style={styles.settingTitleContainer}>
+              <Text style={styles.settingIcon}>✨</Text>
+              <Text style={styles.settingTitle}>Venice Features</Text>
+            </View>
+          </View>
+           <View style={styles.switchRow}>
+            <Text style={styles.switchLabel}>Include Venice System Prompt</Text>
+            <Switch
+              value={settings.includeVeniceSystemPrompt}
+              onValueChange={(val: boolean) => updateSettings({ includeVeniceSystemPrompt: val })}
+              trackColor={{ false: palette.surfaceActive, true: palette.accent }}
+              thumbColor={Platform.OS === 'ios' ? '#fff' : (settings.includeVeniceSystemPrompt ? palette.accentStrong : '#f4f3f4')}
+            />
+          </View>
+          <Text style={styles.settingExplanation}>
+            Includes Venice's default system prompts for uncensored and natural responses.
+          </Text>
+
+           <View style={[styles.switchRow, { marginTop: space.md }]}>
+            <Text style={styles.switchLabel}>Web Citations</Text>
+            <Switch
+              value={settings.webCitations}
+              onValueChange={(val: boolean) => updateSettings({ webCitations: val })}
+              trackColor={{ false: palette.surfaceActive, true: palette.accent }}
+              thumbColor={Platform.OS === 'ios' ? '#fff' : (settings.webCitations ? palette.accentStrong : '#f4f3f4')}
+            />
           </View>
         </View>
 
@@ -730,6 +800,34 @@ const styles = StyleSheet.create({
   pricingText: {
     fontSize: 12,
     color: palette.textMuted,
+    fontFamily: fonts.medium,
+  },
+  resetButton: {
+    marginHorizontal: space.lg,
+    marginBottom: space.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: space.md,
+    backgroundColor: palette.surfaceActive,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: palette.border,
+    gap: space.sm,
+  },
+  resetButtonText: {
+    color: palette.accentStrong,
+    fontFamily: fonts.medium,
+    fontSize: 16,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  switchLabel: {
+    fontSize: 16,
+    color: palette.textPrimary,
     fontFamily: fonts.medium,
   },
 });
