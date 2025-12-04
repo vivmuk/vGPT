@@ -323,12 +323,10 @@ export default function FullAppScreen() {
         messages: conversationHistory,
         stream: true,
         venice_parameters: {
-          character_slug: 'venice',
           strip_thinking_response: settings.stripThinking,
           disable_thinking: settings.disableThinking,
           enable_web_search: settings.webSearch,
           enable_web_citations: settings.webCitations,
-          include_search_results_in_stream: settings.includeSearchResults,
           include_venice_system_prompt: settings.includeVeniceSystemPrompt,
         },
       };
@@ -336,7 +334,7 @@ export default function FullAppScreen() {
       if (settings.temperature !== undefined) requestBody.temperature = settings.temperature;
       if (settings.topP !== undefined) requestBody.top_p = settings.topP;
       if (settings.minP !== undefined) requestBody.min_p = settings.minP;
-      if (settings.maxTokens !== undefined) requestBody.max_tokens = settings.maxTokens;
+      if (settings.maxTokens !== undefined) requestBody.max_completion_tokens = settings.maxTokens;
       if (settings.topK !== undefined) requestBody.top_k = settings.topK;
       if (settings.repetitionPenalty !== undefined) requestBody.repetition_penalty = settings.repetitionPenalty;
 
