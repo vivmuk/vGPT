@@ -16,6 +16,7 @@ import {
   useWindowDimensions,
   LayoutAnimation,
   UIManager,
+  Share,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -157,7 +158,7 @@ export default function FullAppScreen() {
     };
   }, []);
 
-    const textModels = useMemo(() => 
+  const textModels = useMemo(() => 
     models.filter((model: VeniceModel) => {
       const modelType = model.type?.toLowerCase() ?? '';
       return modelType !== 'image' && !isImageModel(model);
@@ -291,6 +292,28 @@ export default function FullAppScreen() {
 
   const handleSuggestionPress = (suggestion: string) => {
     setMessage(suggestion);
+  };
+
+  const downloadImage = async (imageUrl: string) => {
+    try {
+      if (Platform.OS === 'web') {
+        const link = document.createElement('a');
+        link.href = imageUrl;
+        link.download = `venice-image-${Date.now()}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else {
+        // Native share/save
+        await Share.share({
+          url: imageUrl,
+          title: 'Generated Image',
+        });
+      }
+    } catch (error) {
+      console.error('Download failed:', error);
+      Alert.alert('Error', 'Failed to download image.');
+    }
   };
 
   const handleSend = async () => {
@@ -663,6 +686,16 @@ export default function FullAppScreen() {
     );
   };
 
+  // Loading bubble component
+  const LoadingBubble = () => (
+    <View style={[styles.messageRow, styles.assistantMessageRow]}>
+      <View style={[styles.messageBubble, styles.assistantMessageBubble, styles.loadingBubble]}>
+         <ActivityIndicator color={palette.accent} size="small" />
+         <Text style={styles.loadingBubbleText}>Thinking...</Text>
+      </View>
+    </View>
+  );
+
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
@@ -745,8 +778,9 @@ export default function FullAppScreen() {
                   keyExtractor={(item) => item.id}
                   contentContainerStyle={[
                     styles.listContentContainer, 
-                    { paddingTop: 140, paddingBottom: 120 } // Adjust for header/composer
+                    { paddingTop: 140, paddingBottom: 120 } 
                   ]}
+                  ListFooterComponent={isLoading ? <LoadingBubble /> : null}
                   onScroll={handleScroll}
                   scrollEventThrottle={16}
                 />
@@ -784,12 +818,28 @@ export default function FullAppScreen() {
               ) : (
                 generatedImages.map((item: GeneratedImage) => (
                   <View key={item.id} style={styles.generatedCard}>
-                    <Image source={{ uri: item.imageData }} style={styles.generatedImage} contentFit="cover" />
+                    <Image 
+                      source={{ uri: item.imageData }} 
+                      style={[
+                        styles.generatedImage, 
+                        // If we have dimensions, use aspect ratio, else default to square or flexible
+                        item.width && item.height ? { aspectRatio: item.width / item.height } : { height: 400 }
+                      ]} 
+                      contentFit="contain" 
+                    />
                     <View style={styles.cardOverlay}>
-                      <Text style={styles.generatedPrompt} numberOfLines={2}>{item.prompt}</Text>
-                      <Text style={styles.generatedDetails}>
-                        {getModelDisplayName(item.modelId)}
-                      </Text>
+                      <View style={{flex: 1}}>
+                        <Text style={styles.generatedPrompt} numberOfLines={2}>{item.prompt}</Text>
+                        <Text style={styles.generatedDetails}>
+                          {getModelDisplayName(item.modelId)} • {item.width}x{item.height}
+                        </Text>
+                      </View>
+                      <TouchableOpacity 
+                        style={styles.downloadButton} 
+                        onPress={() => downloadImage(item.imageData)}
+                      >
+                        <Ionicons name="download-outline" size={24} color="white" />
+                      </TouchableOpacity>
                     </View>
                   </View>
                 ))
@@ -801,17 +851,58 @@ export default function FullAppScreen() {
         {/* Floating Composer */}
         <BlurView intensity={95} tint="dark" style={[styles.composerContainer, { paddingBottom: insets.bottom + space.sm }]}>
           {activeTab === 'image' && showImageSettings && (
-            <View style={styles.quickSettings}>
-               {/* Simplified inline settings for quick access */}
-               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.settingsScroll}>
-                  <View style={styles.settingChip}>
-                    <Text style={styles.settingChipLabel}>Size</Text>
-                    <TouchableOpacity onPress={() => updateSettings({ imageWidth: 1024, imageHeight: 1024 })}>
-                      <Text style={[styles.settingChipValue, settings.imageWidth === 1024 && styles.activeSetting]}>1:1</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => updateSettings({ imageWidth: 576, imageHeight: 1024 })}>
-                      <Text style={[styles.settingChipValue, settings.imageWidth === 576 && styles.activeSetting]}>9:16</Text>
-                    </TouchableOpacity>
+            <View style={styles.imageSettingsPanel}>
+               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.settingsScroll} contentContainerStyle={{gap: 12}}>
+                  {/* Size Chips */}
+                  <View style={styles.settingGroup}>
+                    <Text style={styles.settingLabel}>Size</Text>
+                    <View style={styles.chipRow}>
+                      <TouchableOpacity onPress={() => updateSettings({ imageWidth: 1024, imageHeight: 1024 })}>
+                        <Text style={[styles.chipText, settings.imageWidth === 1024 && settings.imageHeight === 1024 && styles.activeChip]}>Square</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => updateSettings({ imageWidth: 576, imageHeight: 1024 })}>
+                        <Text style={[styles.chipText, settings.imageWidth === 576 && settings.imageHeight === 1024 && styles.activeChip]}>Portrait</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => updateSettings({ imageWidth: 1024, imageHeight: 576 })}>
+                        <Text style={[styles.chipText, settings.imageWidth === 1024 && settings.imageHeight === 576 && styles.activeChip]}>Landscape</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  <View style={styles.dividerVertical} />
+
+                  {/* Steps Slider */}
+                  <View style={styles.settingGroup}>
+                    <Text style={styles.settingLabel}>Steps: {Math.min(settings.imageSteps || 8, 8)}</Text>
+                    <Slider
+                      style={{width: 100, height: 30}}
+                      minimumValue={1}
+                      maximumValue={8}
+                      step={1}
+                      value={Math.min(settings.imageSteps || 8, 8)}
+                      onValueChange={(val) => updateSettings({ imageSteps: val })}
+                      minimumTrackTintColor={palette.neon.pink}
+                      maximumTrackTintColor={palette.border}
+                      thumbTintColor={palette.neon.pink}
+                    />
+                  </View>
+
+                  <View style={styles.dividerVertical} />
+
+                  {/* CFG Slider */}
+                  <View style={styles.settingGroup}>
+                    <Text style={styles.settingLabel}>CFG: {settings.imageGuidanceScale}</Text>
+                    <Slider
+                      style={{width: 100, height: 30}}
+                      minimumValue={1}
+                      maximumValue={20}
+                      step={0.5}
+                      value={settings.imageGuidanceScale}
+                      onValueChange={(val) => updateSettings({ imageGuidanceScale: parseFloat(val.toFixed(1)) })}
+                      minimumTrackTintColor={palette.neon.pink}
+                      maximumTrackTintColor={palette.border}
+                      thumbTintColor={palette.neon.pink}
+                    />
                   </View>
                </ScrollView>
             </View>
@@ -823,7 +914,7 @@ export default function FullAppScreen() {
                 style={styles.composerIconLeft}
                 onPress={() => setShowImageSettings(!showImageSettings)}
               >
-                <Ionicons name={showImageSettings ? "options" : "options-outline"} size={24} color={palette.textSecondary} />
+                <Ionicons name={showImageSettings ? "options" : "options-outline"} size={24} color={showImageSettings ? palette.neon.pink : palette.textSecondary} />
               </TouchableOpacity>
             )}
             
@@ -1082,6 +1173,20 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceElevated,
     borderBottomLeftRadius: 4,
   },
+  loadingBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: space.md,
+    backgroundColor: palette.surfaceElevated,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  loadingBubbleText: {
+    fontSize: 14,
+    color: palette.textSecondary,
+    fontFamily: fonts.medium,
+  },
   messageText: {
     fontSize: 16,
     color: palette.textPrimary,
@@ -1154,33 +1259,46 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     margin: 4,
   },
-  quickSettings: {
-    marginBottom: space.sm,
+  imageSettingsPanel: {
+    marginBottom: space.md,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    borderRadius: radii.lg,
+    padding: space.md,
+    borderWidth: 1,
+    borderColor: palette.borderMuted,
   },
   settingsScroll: {
-    maxHeight: 40,
+    maxHeight: 50,
   },
-  settingChip: {
+  settingGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: palette.surfaceElevated,
-    borderRadius: radii.md,
-    padding: space.sm,
-    gap: space.md,
+    gap: space.sm,
   },
-  settingChipLabel: {
+  settingLabel: {
     fontSize: 12,
     color: palette.textMuted,
     fontFamily: fonts.medium,
+    marginRight: 4,
   },
-  settingChipValue: {
-    fontSize: 12,
+  chipRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  chipText: {
+    fontSize: 13,
     color: palette.textSecondary,
     fontFamily: fonts.medium,
   },
-  activeSetting: {
-    color: palette.accent,
+  activeChip: {
+    color: palette.neon.pink,
     fontFamily: fonts.bold,
+  },
+  dividerVertical: {
+    width: 1,
+    height: '60%',
+    backgroundColor: palette.divider,
+    marginHorizontal: space.xs,
   },
   imageContainer: {
     flex: 1,
@@ -1193,13 +1311,15 @@ const styles = StyleSheet.create({
     borderRadius: radii.xl,
     overflow: 'hidden',
     backgroundColor: palette.surface,
-    height: 400,
     borderWidth: 1,
     borderColor: palette.border,
+    // No fixed height, let contentFit contain define usage, 
+    // but we need minHeight to ensure visibility or use aspect ratio wrapper
+    minHeight: 300,
   },
   generatedImage: {
     width: '100%',
-    height: '100%',
+    backgroundColor: '#000',
   },
   cardOverlay: {
     position: 'absolute',
@@ -1207,7 +1327,15 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     padding: space.lg,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+  },
+  downloadButton: {
+    padding: space.sm,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: radii.pill,
   },
   generatedPrompt: {
     fontSize: 14,
