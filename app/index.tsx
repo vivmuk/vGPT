@@ -121,7 +121,7 @@ export default function FullAppScreen() {
   const [imageError, setImageError] = useState<string | null>(null);
   const [showImageSettings, setShowImageSettings] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
-  
+
   const flatListRef = useRef<FlatList>(null);
   const activeRequestControllerRef = useRef<AbortController | null>(null);
   const responseStartTimeRef = useRef<number>(0);
@@ -142,13 +142,13 @@ export default function FullAppScreen() {
     const interval = setInterval(() => {
       loadStoredSettings<AppSettings>(DEFAULT_SETTINGS).then((loadedSettings) => {
         if (JSON.stringify(loadedSettings) !== JSON.stringify(settings)) {
-           if (loadedSettings.imageGuidanceScale !== undefined) {
+          if (loadedSettings.imageGuidanceScale !== undefined) {
             loadedSettings.imageGuidanceScale = Math.max(1, Math.min(20, loadedSettings.imageGuidanceScale));
           }
           setSettings(loadedSettings);
         }
       });
-    }, 1000); 
+    }, 1000);
     return () => clearInterval(interval);
   }, [settings]);
 
@@ -158,11 +158,11 @@ export default function FullAppScreen() {
     };
   }, []);
 
-  const textModels = useMemo(() => 
+  const textModels = useMemo(() =>
     models.filter((model: VeniceModel) => {
       const modelType = model.type?.toLowerCase() ?? '';
       return modelType !== 'image' && !isImageModel(model);
-    }), 
+    }),
     [models]
   );
 
@@ -199,8 +199,8 @@ export default function FullAppScreen() {
       const textModelsList: VeniceModel[] = Array.isArray(textData?.data)
         ? textData.data
         : Array.isArray(textData?.models)
-        ? textData.models
-        : [];
+          ? textData.models
+          : [];
 
       const imageResponse = await fetch(`${VENICE_MODELS_ENDPOINT}?type=image`, {
         method: 'GET',
@@ -213,8 +213,8 @@ export default function FullAppScreen() {
         imageModelsList = Array.isArray(imageData?.data)
           ? imageData.data
           : Array.isArray(imageData?.models)
-          ? imageData.models
-          : [];
+            ? imageData.models
+            : [];
       }
 
       const allModels = [...textModelsList, ...imageModelsList];
@@ -278,9 +278,9 @@ export default function FullAppScreen() {
       'Are you sure you want to clear the conversation history?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Clear', 
-          style: 'destructive', 
+        {
+          text: 'Clear',
+          style: 'destructive',
           onPress: () => {
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
             setMessages([]);
@@ -341,17 +341,29 @@ export default function FullAppScreen() {
         content: msg.content,
       }));
 
+      const currentModel = models.find(m => m.id === settings.model);
+
+      const veniceParameters: any = {
+        include_venice_system_prompt: settings.includeVeniceSystemPrompt,
+      };
+
+      // Only add web search params if the model supports it
+      if (currentModel?.model_spec?.capabilities?.supportsWebSearch) {
+        veniceParameters.enable_web_search = settings.webSearch;
+        veniceParameters.enable_web_citations = settings.webCitations;
+      }
+
+      // Only add thinking params if the model supports reasoning
+      if (currentModel?.model_spec?.capabilities?.supportsReasoning) {
+        if (settings.stripThinking !== undefined) veniceParameters.strip_thinking_response = settings.stripThinking;
+        if (settings.disableThinking !== undefined) veniceParameters.disable_thinking = settings.disableThinking;
+      }
+
       const requestBody: Record<string, any> = {
         model: settings.model,
         messages: conversationHistory,
         stream: true,
-        venice_parameters: {
-          strip_thinking_response: settings.stripThinking,
-          disable_thinking: settings.disableThinking,
-          enable_web_search: settings.webSearch,
-          enable_web_citations: settings.webCitations,
-          include_venice_system_prompt: settings.includeVeniceSystemPrompt,
-        },
+        venice_parameters: veniceParameters,
       };
 
       if (settings.temperature !== undefined) requestBody.temperature = settings.temperature;
@@ -385,7 +397,7 @@ export default function FullAppScreen() {
       assistantMessageId = `${Date.now()}-assistant`;
       responseStartTimeRef.current = Date.now();
       tokenCountRef.current = 0;
-      
+
       const placeholderMessage: Message = {
         role: 'assistant',
         content: '',
@@ -427,22 +439,22 @@ export default function FullAppScreen() {
               try {
                 const parsed = JSON.parse(data);
                 const choice = parsed?.choices?.[0];
-                
+
                 if (parsed?.usage) {
                   finalUsage = parsed.usage;
                   tokenCountRef.current = finalUsage.total_tokens || finalUsage.completion_tokens || tokenCountRef.current;
                 }
-                
+
                 if (choice?.delta?.content) {
                   rawAssistantContent += choice.delta.content;
                   const newTokens = Math.ceil(choice.delta.content.length / 4);
                   tokenCountRef.current += newTokens;
-                  
+
                   const now = Date.now();
                   const elapsed = (now - responseStartTimeRef.current) / 1000;
                   const tokensPerSecond = elapsed > 0 ? tokenCountRef.current / elapsed : 0;
-                  
-                  updateAssistantMessage({ 
+
+                  updateAssistantMessage({
                     content: rawAssistantContent,
                     metrics: {
                       tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
@@ -462,32 +474,32 @@ export default function FullAppScreen() {
         }
 
         reader.releaseLock?.();
-        
+
         const responseTime = (Date.now() - responseStartTimeRef.current) / 1000;
         const currentModel = models.find(m => m.id === settings.model);
         const inputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.input);
         const outputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.output);
-        
+
         let inputTokens = finalUsage?.prompt_tokens;
         let outputTokens = finalUsage?.completion_tokens;
         let totalTokens = finalUsage?.total_tokens;
-        
+
         if (!inputTokens || !outputTokens) {
           const estimatedOutputTokens = Math.ceil(rawAssistantContent.length / 4);
           const conversationText = conversationHistory.map(m => m.content).join(' ');
           const estimatedInputTokens = Math.ceil(conversationText.length / 4);
-          
+
           inputTokens = inputTokens || estimatedInputTokens;
           outputTokens = outputTokens || estimatedOutputTokens;
           totalTokens = totalTokens || (inputTokens + outputTokens);
         }
-        
+
         const tokensPerSecond = responseTime > 0 && totalTokens ? totalTokens / responseTime : 0;
-        
+
         let cost = 0;
         if (inputPrice && inputTokens) cost += (inputPrice * inputTokens) / 1_000_000;
         if (outputPrice && outputTokens) cost += (outputPrice * outputTokens) / 1_000_000;
-        
+
         updateAssistantMessage({
           metrics: {
             tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
@@ -503,20 +515,20 @@ export default function FullAppScreen() {
         rawAssistantContent = data?.choices?.[0]?.message?.content ?? '';
         const responseTime = (Date.now() - responseStartTimeRef.current) / 1000;
         const usage = data?.usage;
-        
+
         const currentModel = models.find(m => m.id === settings.model);
         const inputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.input);
         const outputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.output);
-        
+
         let cost = 0;
         if (usage) {
           if (inputPrice && usage.prompt_tokens) cost += (inputPrice * usage.prompt_tokens) / 1_000_000;
           if (outputPrice && usage.completion_tokens) cost += (outputPrice * usage.completion_tokens) / 1_000_000;
         }
-        
+
         const tokensPerSecond = usage && responseTime > 0 ? (usage.total_tokens || 0) / responseTime : 0;
-        
-        updateAssistantMessage({ 
+
+        updateAssistantMessage({
           content: rawAssistantContent || "Sorry, I couldn't generate a response.",
           metrics: usage ? {
             tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
@@ -573,7 +585,7 @@ export default function FullAppScreen() {
         format: 'webp',
         hide_watermark: false,
       };
-      
+
       if (settings.imageSteps !== undefined) {
         payload.steps = Math.min(settings.imageSteps, 8);
       }
@@ -640,7 +652,7 @@ export default function FullAppScreen() {
           </View>
         );
       }
-      
+
       const text = part
         .replace(/\*\*(.*?)\*\*/g, '$1')
         .replace(/\*(.*?)\*/g, '$1')
@@ -648,7 +660,7 @@ export default function FullAppScreen() {
         .replace(/#{1,6}\s+(.*?)$/gm, '$1')
         .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1')
         .trim();
-      
+
       if (!text) return null;
       return <Text key={index} style={styles.messageText}>{text}</Text>;
     });
@@ -659,9 +671,9 @@ export default function FullAppScreen() {
       <View style={[styles.messageRow, item.role === 'user' ? styles.userMessageRow : styles.assistantMessageRow]}>
         <View style={[styles.messageBubble, item.role === 'user' ? styles.userMessageBubble : styles.assistantMessageBubble]}>
           <View>
-             {formatMessageContent(item.content)}
+            {formatMessageContent(item.content)}
           </View>
-          
+
           {item.role === 'assistant' && item.metrics && (
             <View style={styles.metricsContainer}>
               {item.metrics.inputTokens !== undefined && (
@@ -690,8 +702,8 @@ export default function FullAppScreen() {
   const LoadingBubble = () => (
     <View style={[styles.messageRow, styles.assistantMessageRow]}>
       <View style={[styles.messageBubble, styles.assistantMessageBubble, styles.loadingBubble]}>
-         <ActivityIndicator color={palette.accent} size="small" />
-         <Text style={styles.loadingBubbleText}>Thinking...</Text>
+        <ActivityIndicator color={palette.accent} size="small" />
+        <Text style={styles.loadingBubbleText}>Thinking...</Text>
       </View>
     </View>
   );
@@ -699,7 +711,7 @@ export default function FullAppScreen() {
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-      
+
       {/* Glass Header */}
       <BlurView intensity={80} tint="dark" style={[styles.header, { paddingTop: insets.top + space.sm }]}>
         <View style={styles.headerContent}>
@@ -708,30 +720,30 @@ export default function FullAppScreen() {
             <Text style={styles.logoText}>vGPT</Text>
           </View>
           <View style={styles.headerRight}>
-            <TouchableOpacity 
-              style={styles.modelSelector} 
+            <TouchableOpacity
+              style={styles.modelSelector}
               onPress={() => setShowModelPicker(true)}
             >
               <Text style={styles.modelText} numberOfLines={1}>
-                {activeTab === 'chat' 
+                {activeTab === 'chat'
                   ? getModelDisplayName(settings.model)
                   : getModelDisplayName(settings.imageModel)}
               </Text>
               <Ionicons name="chevron-down" size={14} color={palette.neon.cyan} />
             </TouchableOpacity>
-            
+
             {activeTab === 'chat' && messages.length > 0 && (
               <TouchableOpacity style={styles.iconButton} onPress={handleClearChat}>
                 <Ionicons name="trash-outline" size={20} color={palette.danger} />
               </TouchableOpacity>
             )}
-            
+
             <TouchableOpacity style={styles.iconButton} onPress={() => router.push('/settings')}>
               <Ionicons name="settings-outline" size={20} color={palette.textSecondary} />
             </TouchableOpacity>
           </View>
         </View>
-        
+
         <View style={styles.tabSwitcher}>
           <TouchableOpacity style={[styles.tab, activeTab === 'chat' && styles.activeTab]} onPress={() => setActiveTab('chat')}>
             <Text style={[styles.tabText, activeTab === 'chat' && styles.activeTabText]}>Chat</Text>
@@ -759,8 +771,8 @@ export default function FullAppScreen() {
                     </View>
                     <View style={styles.suggestionsGrid}>
                       {SUGGESTIONS.map((suggestion, index) => (
-                        <TouchableOpacity 
-                          key={index} 
+                        <TouchableOpacity
+                          key={index}
                           style={styles.suggestionChip}
                           onPress={() => handleSuggestionPress(suggestion)}
                         >
@@ -777,15 +789,15 @@ export default function FullAppScreen() {
                   renderItem={renderMessageItem}
                   keyExtractor={(item) => item.id}
                   contentContainerStyle={[
-                    styles.listContentContainer, 
-                    { paddingTop: 140, paddingBottom: 120 } 
+                    styles.listContentContainer,
+                    { paddingTop: 140, paddingBottom: 120 }
                   ]}
                   ListFooterComponent={isLoading ? <LoadingBubble /> : null}
                   onScroll={handleScroll}
                   scrollEventThrottle={16}
                 />
               )}
-              
+
               {showScrollToBottom && (
                 <TouchableOpacity style={styles.scrollToBottomButton} onPress={scrollToBottom}>
                   <Ionicons name="arrow-down" size={20} color={palette.textPrimary} />
@@ -795,8 +807,8 @@ export default function FullAppScreen() {
           )}
 
           {activeTab === 'image' && (
-            <ScrollView 
-              style={styles.imageContainer} 
+            <ScrollView
+              style={styles.imageContainer}
               contentContainerStyle={[
                 styles.imageContent,
                 { paddingTop: 140, paddingBottom: 120 }
@@ -818,24 +830,24 @@ export default function FullAppScreen() {
               ) : (
                 generatedImages.map((item: GeneratedImage) => (
                   <View key={item.id} style={styles.generatedCard}>
-                    <Image 
-                      source={{ uri: item.imageData }} 
+                    <Image
+                      source={{ uri: item.imageData }}
                       style={[
-                        styles.generatedImage, 
+                        styles.generatedImage,
                         // If we have dimensions, use aspect ratio, else default to square or flexible
                         item.width && item.height ? { aspectRatio: item.width / item.height } : { height: 400 }
-                      ]} 
-                      contentFit="contain" 
+                      ]}
+                      contentFit="contain"
                     />
                     <View style={styles.cardOverlay}>
-                      <View style={{flex: 1}}>
+                      <View style={{ flex: 1 }}>
                         <Text style={styles.generatedPrompt} numberOfLines={2}>{item.prompt}</Text>
                         <Text style={styles.generatedDetails}>
                           {getModelDisplayName(item.modelId)} • {item.width}x{item.height}
                         </Text>
                       </View>
-                      <TouchableOpacity 
-                        style={styles.downloadButton} 
+                      <TouchableOpacity
+                        style={styles.downloadButton}
                         onPress={() => downloadImage(item.imageData)}
                       >
                         <Ionicons name="download-outline" size={24} color="white" />
@@ -852,72 +864,72 @@ export default function FullAppScreen() {
         <BlurView intensity={95} tint="dark" style={[styles.composerContainer, { paddingBottom: insets.bottom + space.sm }]}>
           {activeTab === 'image' && showImageSettings && (
             <View style={styles.imageSettingsPanel}>
-               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.settingsScroll} contentContainerStyle={{gap: 12}}>
-                  {/* Size Chips */}
-                  <View style={styles.settingGroup}>
-                    <Text style={styles.settingLabel}>Size</Text>
-                    <View style={styles.chipRow}>
-                      <TouchableOpacity onPress={() => updateSettings({ imageWidth: 1024, imageHeight: 1024 })}>
-                        <Text style={[styles.chipText, settings.imageWidth === 1024 && settings.imageHeight === 1024 && styles.activeChip]}>Square</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={() => updateSettings({ imageWidth: 576, imageHeight: 1024 })}>
-                        <Text style={[styles.chipText, settings.imageWidth === 576 && settings.imageHeight === 1024 && styles.activeChip]}>Portrait</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={() => updateSettings({ imageWidth: 1024, imageHeight: 576 })}>
-                        <Text style={[styles.chipText, settings.imageWidth === 1024 && settings.imageHeight === 576 && styles.activeChip]}>Landscape</Text>
-                      </TouchableOpacity>
-                    </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.settingsScroll} contentContainerStyle={{ gap: 12 }}>
+                {/* Size Chips */}
+                <View style={styles.settingGroup}>
+                  <Text style={styles.settingLabel}>Size</Text>
+                  <View style={styles.chipRow}>
+                    <TouchableOpacity onPress={() => updateSettings({ imageWidth: 1024, imageHeight: 1024 })}>
+                      <Text style={[styles.chipText, settings.imageWidth === 1024 && settings.imageHeight === 1024 && styles.activeChip]}>Square</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => updateSettings({ imageWidth: 576, imageHeight: 1024 })}>
+                      <Text style={[styles.chipText, settings.imageWidth === 576 && settings.imageHeight === 1024 && styles.activeChip]}>Portrait</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => updateSettings({ imageWidth: 1024, imageHeight: 576 })}>
+                      <Text style={[styles.chipText, settings.imageWidth === 1024 && settings.imageHeight === 576 && styles.activeChip]}>Landscape</Text>
+                    </TouchableOpacity>
                   </View>
+                </View>
 
-                  <View style={styles.dividerVertical} />
+                <View style={styles.dividerVertical} />
 
-                  {/* Steps Slider */}
-                  <View style={styles.settingGroup}>
-                    <Text style={styles.settingLabel}>Steps: {Math.min(settings.imageSteps || 8, 8)}</Text>
-                    <Slider
-                      style={{width: 100, height: 30}}
-                      minimumValue={1}
-                      maximumValue={8}
-                      step={1}
-                      value={Math.min(settings.imageSteps || 8, 8)}
-                      onValueChange={(val) => updateSettings({ imageSteps: val })}
-                      minimumTrackTintColor={palette.neon.pink}
-                      maximumTrackTintColor={palette.border}
-                      thumbTintColor={palette.neon.pink}
-                    />
-                  </View>
+                {/* Steps Slider */}
+                <View style={styles.settingGroup}>
+                  <Text style={styles.settingLabel}>Steps: {Math.min(settings.imageSteps || 8, 8)}</Text>
+                  <Slider
+                    style={{ width: 100, height: 30 }}
+                    minimumValue={1}
+                    maximumValue={8}
+                    step={1}
+                    value={Math.min(settings.imageSteps || 8, 8)}
+                    onValueChange={(val) => updateSettings({ imageSteps: val })}
+                    minimumTrackTintColor={palette.neon.pink}
+                    maximumTrackTintColor={palette.border}
+                    thumbTintColor={palette.neon.pink}
+                  />
+                </View>
 
-                  <View style={styles.dividerVertical} />
+                <View style={styles.dividerVertical} />
 
-                  {/* CFG Slider */}
-                  <View style={styles.settingGroup}>
-                    <Text style={styles.settingLabel}>CFG: {settings.imageGuidanceScale}</Text>
-                    <Slider
-                      style={{width: 100, height: 30}}
-                      minimumValue={1}
-                      maximumValue={20}
-                      step={0.5}
-                      value={settings.imageGuidanceScale}
-                      onValueChange={(val) => updateSettings({ imageGuidanceScale: parseFloat(val.toFixed(1)) })}
-                      minimumTrackTintColor={palette.neon.pink}
-                      maximumTrackTintColor={palette.border}
-                      thumbTintColor={palette.neon.pink}
-                    />
-                  </View>
-               </ScrollView>
+                {/* CFG Slider */}
+                <View style={styles.settingGroup}>
+                  <Text style={styles.settingLabel}>CFG: {settings.imageGuidanceScale}</Text>
+                  <Slider
+                    style={{ width: 100, height: 30 }}
+                    minimumValue={1}
+                    maximumValue={20}
+                    step={0.5}
+                    value={settings.imageGuidanceScale}
+                    onValueChange={(val) => updateSettings({ imageGuidanceScale: parseFloat(val.toFixed(1)) })}
+                    minimumTrackTintColor={palette.neon.pink}
+                    maximumTrackTintColor={palette.border}
+                    thumbTintColor={palette.neon.pink}
+                  />
+                </View>
+              </ScrollView>
             </View>
           )}
 
           <View style={styles.composer}>
             {activeTab === 'image' && (
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.composerIconLeft}
                 onPress={() => setShowImageSettings(!showImageSettings)}
               >
                 <Ionicons name={showImageSettings ? "options" : "options-outline"} size={24} color={showImageSettings ? palette.neon.pink : palette.textSecondary} />
               </TouchableOpacity>
             )}
-            
+
             <TextInput
               style={styles.input}
               placeholder={activeTab === 'chat' ? "Message vGPT..." : "Describe an image..."}
@@ -927,12 +939,12 @@ export default function FullAppScreen() {
               multiline
               editable={!isLoading && !isGeneratingImage}
             />
-            
-            <TouchableOpacity 
+
+            <TouchableOpacity
               style={[
-                styles.sendButton, 
+                styles.sendButton,
                 { backgroundColor: activeTab === 'chat' ? palette.neon.cyan : palette.neon.pink }
-              ]} 
+              ]}
               onPress={activeTab === 'chat' ? handleSend : handleGenerateImage}
               disabled={activeTab === 'chat' ? (!message.trim() || isLoading) : (!imagePrompt.trim() || isGeneratingImage)}
             >
@@ -962,7 +974,7 @@ export default function FullAppScreen() {
             </Text>
             <View style={styles.headerSpacer} />
           </View>
-          
+
           {isLoadingModels ? (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="small" color={palette.accent} />
