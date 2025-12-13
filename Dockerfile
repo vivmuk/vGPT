@@ -24,4 +24,4 @@ EXPOSE 3000
 
 # Start the application
 # Railway provides the PORT environment variable
-CMD serve -s dist -l $PORT
+CMD ["/bin/sh", "-c", "serve -s dist -l tcp://0.0.0.0:${PORT:-3000}"]
