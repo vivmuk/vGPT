@@ -9,7 +9,7 @@ const DIST_DIR = path.join(__dirname, 'dist');
 app.use(express.static(DIST_DIR));
 
 // Handle client-side routing, return all requests to the index.html unless it's a static file
-app.get('*', (req, res) => {
+app.get(/(.*)/, (req, res) => {
     // If the request accepts html, give them index.html (SPA logic), 
     // but since we are static export, we might wanna try to find the .html file first.
     // Actually, express.static handles .html extension if configured, but let's be simple first.
