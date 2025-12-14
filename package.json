@@ -2,6 +2,9 @@
   "name": "bloom-app-blank-stylesheet",
   "main": "expo-router/entry",
   "version": "1.0.0",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "dev": "expo start",
     "start": "node server.js",
