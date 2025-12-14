@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "expo start",
-    "start": "http-server dist -p ${PORT:-3000} -a 0.0.0.0 --cors",
+    "start": "node server.js",
     "build": "expo export -p web",
     "android": "expo start --android",
     "ios": "expo start --ios",
@@ -33,6 +33,7 @@
     "expo-symbols": "~0.4.4",
     "expo-system-ui": "~5.0.7",
     "expo-web-browser": "~14.1.6",
+    "express": "^5.2.1",
     "http-server": "^14.1.1",
     "react": "19.0.0",
     "react-dom": "19.0.0",
