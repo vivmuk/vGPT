@@ -18,7 +18,7 @@ export default function RootLayout() {
       document.head.appendChild(preconnect2);
 
       const fontLink = document.createElement('link');
-      fontLink.href = 'https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap';
+      fontLink.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap';
       fontLink.rel = 'stylesheet';
       document.head.appendChild(fontLink);
     }
