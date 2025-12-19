@@ -16,6 +16,7 @@ import {
   LayoutAnimation,
   UIManager,
   Share,
+  Text,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -27,9 +28,6 @@ import { DEFAULT_SETTINGS } from '@/constants/settings';
 import { AppSettings } from '@/types/settings';
 import { VeniceModel } from '@/types/venice';
 import { loadStoredSettings, persistSettings } from '@/utils/settingsStorage';
-import { swissTheme } from '@/constants/swissTheme';
-import SwissText from '@/components/swiss/SwissText';
-import SwissCard from '@/components/swiss/SwissCard';
 import {
   VENICE_API_KEY,
   VENICE_CHAT_COMPLETIONS_ENDPOINT,
@@ -64,6 +62,21 @@ interface GeneratedImage {
   width?: number;
   height?: number;
 }
+
+const COLORS = {
+  background: '#212121', // ChatGPT dark background
+  sidebar: '#171717',
+  textPrimary: '#ececec',
+  textSecondary: '#b4b4b4',
+  border: '#3c3c3c',
+  accent: '#10a37f', // ChatGPT green
+  userBubble: '#2f2f2f',
+  assistantBubble: 'transparent',
+  surface: '#2f2f2f',
+  error: '#ef4444',
+  warning: '#f59e0b',
+  success: '#10b981',
+};
 
 const isImageModel = (model?: VeniceModel | null): boolean => {
   if (!model) return false;
@@ -100,7 +113,7 @@ const SUGGESTIONS = [
 export default function FullAppScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { width, height } = useWindowDimensions();
+  const { width } = useWindowDimensions();
 
   const [activeTab, setActiveTab] = useState<'chat' | 'image'>('chat');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -142,7 +155,7 @@ export default function FullAppScreen() {
           setSettings(loadedSettings);
         }
       });
-    }, 1000);
+    }, 5000); // Polling settings less frequently
     return () => clearInterval(interval);
   }, [settings]);
 
@@ -161,11 +174,7 @@ export default function FullAppScreen() {
   );
 
   const imageModels = useMemo(() => {
-    const filtered = models.filter((model: VeniceModel) => isImageModel(model));
-    if (filtered.length === 0 && models.length > 0) {
-      console.log('No image models found.');
-    }
-    return filtered;
+    return models.filter((model: VeniceModel) => isImageModel(model));
   }, [models]);
 
   const updateSettings = useCallback((newSettings: Partial<AppSettings>) => {
@@ -606,11 +615,8 @@ export default function FullAppScreen() {
       }
 
       const base64String = imagesArray[0];
-      if (!base64String || typeof base64String !== 'string') {
-        throw new Error('Image data is not a valid base64 string.');
-      }
-
       const imageData = `data:image/webp;base64,${base64String}`;
+
       const generated: GeneratedImage = {
         id: `${Date.now()}`,
         prompt: imagePrompt.trim(),
@@ -639,42 +645,38 @@ export default function FullAppScreen() {
         const codeContent = part.replace(/^```[a-z]*\n?/, '').replace(/```$/, '');
         return (
           <View key={index} style={styles.codeBlock}>
-            <SwissText variant="xs" color="white" style={styles.codeText}>
-              {codeContent}
-            </SwissText>
+            <View style={styles.codeHeader}>
+              <Text style={styles.codeHeaderText}>Code</Text>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <Text style={styles.codeText}>{codeContent}</Text>
+            </ScrollView>
           </View>
         );
       }
       return (
-        <SwissText key={index} variant="body" color="primary">
+        <Text key={index} style={styles.messageText}>
           {part}
-        </SwissText>
+        </Text>
       );
     });
   };
 
-  // ===== RENDER FUNCTIONS =====
-
   const renderHeader = () => (
-    <View style={[styles.header, { paddingTop: insets.top }]}>
-      <SwissText variant="h3" weight="semibold" color="primary">
-        vGPT
-      </SwissText>
-      <TouchableOpacity
-        onPress={() => setShowModelPicker(true)}
-        style={styles.modelSelector}
-      >
-        <SwissText variant="small" color="secondary" numberOfLines={1}>
+    <View style={styles.header}>
+      <TouchableOpacity onPress={() => setShowModelPicker(true)} style={styles.modelSelector}>
+        <Text style={styles.modelSelectorText} numberOfLines={1}>
           {getModelDisplayName(settings.model)}
-        </SwissText>
-        <Feather name="chevron-down" size={16} color={swissTheme.colors.text.secondary} />
+        </Text>
+        <Feather name="chevron-down" size={14} color={COLORS.textSecondary} />
       </TouchableOpacity>
-      <View style={{ flexDirection: 'row', gap: swissTheme.spacing[2] }}>
+
+      <View style={styles.headerActions}>
         <TouchableOpacity onPress={handleClearChat} style={styles.iconButton}>
-          <Feather name="trash-2" size={20} color={swissTheme.colors.text.primary} />
+          <Feather name="trash-2" size={20} color={COLORS.textPrimary} />
         </TouchableOpacity>
         <TouchableOpacity onPress={() => router.push('/settings')} style={styles.iconButton}>
-          <Feather name="settings" size={20} color={swissTheme.colors.text.primary} />
+          <Feather name="settings" size={20} color={COLORS.textPrimary} />
         </TouchableOpacity>
       </View>
     </View>
@@ -686,58 +688,35 @@ export default function FullAppScreen() {
         onPress={() => setActiveTab('chat')}
         style={[styles.tab, activeTab === 'chat' && styles.activeTab]}
       >
-        <SwissText
-          variant="small"
-          weight="medium"
-          color={activeTab === 'chat' ? 'accent' : 'secondary'}
-        >
-          Chat
-        </SwissText>
+        <Text style={[styles.tabText, activeTab === 'chat' && styles.activeTabText]}>Chat</Text>
       </TouchableOpacity>
       <TouchableOpacity
         onPress={() => setActiveTab('image')}
         style={[styles.tab, activeTab === 'image' && styles.activeTab]}
       >
-        <SwissText
-          variant="small"
-          weight="medium"
-          color={activeTab === 'image' ? 'accent' : 'secondary'}
-        >
-          Create
-        </SwissText>
+        <Text style={[styles.tabText, activeTab === 'image' && styles.activeTabText]}>Create</Text>
       </TouchableOpacity>
     </View>
   );
 
   const renderChatWelcome = () => (
-    <ScrollView
-      contentContainerStyle={styles.welcomeScroll}
-      scrollEnabled={true}
-    >
-      <View style={styles.welcomeContainer}>
-        <View style={styles.welcomeHero}>
-          <SwissText variant="h1" weight="semibold" color="primary">
-            Chat
-          </SwissText>
-          <SwissText variant="body" color="secondary">
-            Start a conversation
-          </SwissText>
-        </View>
-        <View style={styles.suggestionsGrid}>
-          {SUGGESTIONS.map((suggestion, index) => (
-            <TouchableOpacity
-              key={index}
-              onPress={() => handleSuggestionPress(suggestion)}
-              style={styles.suggestionChip}
-            >
-              <SwissText variant="small" color="secondary">
-                {suggestion}
-              </SwissText>
-            </TouchableOpacity>
-          ))}
-        </View>
+    <View style={styles.welcomeContainer}>
+      <View style={styles.logoContainer}>
+        <Feather name="command" size={48} color={COLORS.textPrimary} />
       </View>
-    </ScrollView>
+      <Text style={styles.welcomeTitle}>How can I help you today?</Text>
+      <View style={styles.suggestionsGrid}>
+        {SUGGESTIONS.map((suggestion, index) => (
+          <TouchableOpacity
+            key={index}
+            onPress={() => handleSuggestionPress(suggestion)}
+            style={styles.suggestionChip}
+          >
+            <Text style={styles.suggestionText}>{suggestion}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
   );
 
   const renderMessages = () => (
@@ -745,33 +724,25 @@ export default function FullAppScreen() {
       ref={flatListRef}
       data={messages}
       renderItem={({ item }) => (
-        <View style={[styles.messageRow, item.role === 'user' ? styles.userMessageRow : styles.assistantMessageRow]}>
-          <SwissCard
-            variant={item.role === 'user' ? 'elevated' : 'default'}
-            padding={4}
-            style={[
-              styles.messageBubble,
-              item.role === 'user' ? styles.userMessageBubble : styles.assistantMessageBubble,
-            ]}
-          >
-            {formatMessageContent(item.content)}
+        <View style={[styles.messageRow, item.role === 'user' ? styles.userRow : styles.assistantRow]}>
+          <View style={item.role === 'user' ? styles.userAvatar : styles.assistantAvatar}>
+            <Feather name={item.role === 'user' ? 'user' : 'cpu'} size={14} color="#fff" />
+          </View>
+          <View style={styles.messageContent}>
+            <Text style={styles.roleLabel}>{item.role === 'user' ? 'You' : 'vGPT'}</Text>
+            <View style={[styles.bubble, item.role === 'user' ? styles.userBubble : styles.assistantBubble]}>
+              {formatMessageContent(item.content)}
+            </View>
             {item.metrics && item.role === 'assistant' && (
-              <View style={styles.metricsContainer}>
-                <SwissText variant="xs" color="tertiary">
-                  {item.metrics.inputTokens || 0} in •{' '}
-                  {item.metrics.outputTokens || 0} out •{' '}
-                  {item.metrics.tokensPerSecond?.toFixed(1) || '0'} tok/s •{' '}
-                  {item.metrics.responseTime?.toFixed(1) || '0'}s
-                  {item.metrics.cost ? ` • $${item.metrics.cost.toFixed(4)}` : ''}
-                </SwissText>
-              </View>
+              <Text style={styles.metricsText}>
+                {item.metrics.tokensPerSecond?.toFixed(1)} tok/s • {item.metrics.cost ? `$${item.metrics.cost.toFixed(4)}` : `${item.metrics.totalTokens} tokens`}
+              </Text>
             )}
-          </SwissCard>
+          </View>
         </View>
       )}
       keyExtractor={(item) => item.id}
-      contentContainerStyle={styles.listContentContainer}
-      scrollEnabled={true}
+      contentContainerStyle={styles.listContent}
       onScroll={handleScroll}
       scrollEventThrottle={16}
       ListEmptyComponent={renderChatWelcome()}
@@ -779,12 +750,12 @@ export default function FullAppScreen() {
   );
 
   const renderComposer = () => (
-    <View style={[styles.composerContainer, { paddingBottom: insets.bottom + swissTheme.spacing[4] }]}>
-      <View style={styles.composer}>
+    <View style={[styles.composerContainer, { paddingBottom: insets.bottom + 16 }]}>
+      <View style={styles.composerInner}>
         <TextInput
           style={styles.input}
-          placeholder="Type a message..."
-          placeholderTextColor={swissTheme.colors.text.tertiary}
+          placeholder="Message vGPT..."
+          placeholderTextColor={COLORS.textSecondary}
           value={message}
           onChangeText={setMessage}
           multiline
@@ -793,309 +764,147 @@ export default function FullAppScreen() {
         <TouchableOpacity
           onPress={handleSend}
           disabled={isLoading || !message.trim()}
-          style={[styles.sendButton, isLoading && { opacity: 0.5 }]}
+          style={[styles.sendButton, (isLoading || !message.trim()) && { opacity: 0.3 }]}
         >
-          <Feather
-            name="send"
-            size={20}
-            color={swissTheme.colors.white}
-          />
+          {isLoading ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Feather name="arrow-up" size={20} color="#fff" />
+          )}
         </TouchableOpacity>
       </View>
     </View>
   );
 
-  const renderImageWelcome = () => (
-    <ScrollView contentContainerStyle={styles.welcomeScroll}>
-      <View style={styles.welcomeContainer}>
-        <View style={styles.welcomeHero}>
-          <SwissText variant="h1" weight="semibold" color="primary">
-            Create
-          </SwissText>
-          <SwissText variant="body" color="secondary">
-            Generate images from text
-          </SwissText>
-        </View>
-      </View>
-    </ScrollView>
-  );
-
-  const renderImageGallery = () => (
-    <ScrollView style={styles.imageContainer} contentContainerStyle={styles.imageContent}>
-      {generatedImages.map((img) => (
-        <View key={img.id} style={styles.generatedCard}>
-          <Image
-            source={{ uri: img.imageData }}
-            style={[styles.generatedImage, { aspectRatio: (img.width || 1024) / (img.height || 1024) }]}
-            contentFit="cover"
-          />
-          <View style={styles.cardOverlay}>
-            <View style={{ flex: 1 }}>
-              <SwissText variant="small" weight="medium" color="inverted" numberOfLines={2}>
-                {img.prompt}
-              </SwissText>
-              <SwissText variant="xs" color="tertiary" style={{ marginTop: swissTheme.spacing[1] }}>
-                {getModelDisplayName(img.modelId)}
-              </SwissText>
-            </View>
-            <TouchableOpacity
-              onPress={() => downloadImage(img.imageData)}
-              style={styles.downloadButton}
-            >
-              <Feather name="download" size={18} color={swissTheme.colors.white} />
-            </TouchableOpacity>
-          </View>
-        </View>
-      ))}
-    </ScrollView>
-  );
-
   const renderImageTab = () => (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={{ flex: 1 }}
-      keyboardVerticalOffset={0}
-    >
-      <View style={{ flex: 1 }}>
-        {generatedImages.length === 0 ? renderImageWelcome() : renderImageGallery()}
-
-        {showImageSettings && (
-          <SwissCard padding={4} style={styles.imageSettingsPanel}>
-            {/* Size selection */}
-            <View style={styles.settingGroup}>
-              <SwissText variant="label" color="primary" style={{ marginBottom: swissTheme.spacing[2] }}>
-                Size
-              </SwissText>
-              <View style={{ flexDirection: 'row', gap: swissTheme.spacing[2] }}>
-                {[
-                  { label: 'Square', width: 1024, height: 1024 },
-                  { label: 'Portrait', width: 576, height: 1024 },
-                  { label: 'Landscape', width: 1024, height: 576 },
-                ].map((size) => (
-                  <TouchableOpacity
-                    key={size.label}
-                    onPress={() => updateSettings({ imageWidth: size.width, imageHeight: size.height })}
-                    style={[
-                      styles.sizeChip,
-                      settings.imageWidth === size.width && settings.imageHeight === size.height && styles.activeSizeChip,
-                    ]}
-                  >
-                    <SwissText
-                      variant="xs"
-                      color={settings.imageWidth === size.width && settings.imageHeight === size.height ? 'inverted' : 'primary'}
-                    >
-                      {size.label}
-                    </SwissText>
-                  </TouchableOpacity>
-                ))}
+    <View style={styles.imageTabContainer}>
+      <ScrollView contentContainerStyle={styles.imageScrollContent}>
+        {generatedImages.length === 0 ? (
+          <View style={styles.imageWelcome}>
+            <Text style={styles.welcomeTitle}>Create images</Text>
+            <Text style={styles.welcomeSubtitle}>Generate stunning visuals with AI</Text>
+          </View>
+        ) : (
+          <View style={styles.imageGrid}>
+            {generatedImages.map((img) => (
+              <View key={img.id} style={styles.imageCard}>
+                <Image
+                  source={{ uri: img.imageData }}
+                  style={[styles.genImage, { aspectRatio: (img.width || 1024) / (img.height || 1024) }]}
+                  contentFit="cover"
+                />
+                <TouchableOpacity onPress={() => downloadImage(img.imageData)} style={styles.imgDownloadBtn}>
+                  <Feather name="download" size={18} color="#fff" />
+                </TouchableOpacity>
               </View>
-            </View>
-
-            {/* Steps slider */}
-            <View style={{ marginTop: swissTheme.spacing[4] }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: swissTheme.spacing[2] }}>
-                <SwissText variant="label" color="primary">
-                  Steps
-                </SwissText>
-                <SwissText variant="label" weight="semibold" color="accent">
-                  {settings.imageSteps || 8}
-                </SwissText>
-              </View>
-              <Slider
-                style={{ height: 40 }}
-                minimumValue={1}
-                maximumValue={8}
-                step={1}
-                value={settings.imageSteps || 8}
-                onValueChange={(value) => updateSettings({ imageSteps: value })}
-                minimumTrackTintColor={swissTheme.colors.accent.primary}
-                maximumTrackTintColor={swissTheme.colors.gray[300]}
-                thumbTintColor={swissTheme.colors.accent.primary}
-              />
-            </View>
-
-            {/* CFG Scale slider */}
-            <View style={{ marginTop: swissTheme.spacing[4] }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: swissTheme.spacing[2] }}>
-                <SwissText variant="label" color="primary">
-                  Guidance
-                </SwissText>
-                <SwissText variant="label" weight="semibold" color="accent">
-                  {(settings.imageGuidanceScale || 7.5).toFixed(1)}
-                </SwissText>
-              </View>
-              <Slider
-                style={{ height: 40 }}
-                minimumValue={1}
-                maximumValue={20}
-                step={0.5}
-                value={settings.imageGuidanceScale || 7.5}
-                onValueChange={(value) => updateSettings({ imageGuidanceScale: value })}
-                minimumTrackTintColor={swissTheme.colors.accent.primary}
-                maximumTrackTintColor={swissTheme.colors.gray[300]}
-                thumbTintColor={swissTheme.colors.accent.primary}
-              />
-            </View>
-          </SwissCard>
-        )}
-
-        {imageError && (
-          <View style={styles.errorBanner}>
-            <SwissText variant="small" color="error">
-              {imageError}
-            </SwissText>
+            ))}
           </View>
         )}
+      </ScrollView>
 
-        <View style={[styles.composerContainer, { paddingBottom: insets.bottom + swissTheme.spacing[4] }]}>
-          <View style={styles.composer}>
-            <TouchableOpacity
-              onPress={() => setShowImageSettings(!showImageSettings)}
-              style={{ marginLeft: swissTheme.spacing[2] }}
-            >
-              <Feather name="sliders" size={20} color={swissTheme.colors.text.primary} />
-            </TouchableOpacity>
-            <TextInput
-              style={styles.input}
-              placeholder="Describe an image..."
-              placeholderTextColor={swissTheme.colors.text.tertiary}
-              value={imagePrompt}
-              onChangeText={setImagePrompt}
-              multiline
-              editable={!isGeneratingImage}
-            />
-            <TouchableOpacity
-              onPress={handleGenerateImage}
-              disabled={isGeneratingImage || !imagePrompt.trim()}
-              style={[styles.sendButton, isGeneratingImage && { opacity: 0.5 }]}
-            >
-              {isGeneratingImage ? (
-                <ActivityIndicator size="small" color={swissTheme.colors.white} />
-              ) : (
-                <Feather name="zap" size={20} color={swissTheme.colors.white} />
-              )}
-            </TouchableOpacity>
-          </View>
+      {showImageSettings && (
+        <View style={styles.imageSettingsPanel}>
+          <Text style={styles.settingsPanelTitle}>Generation Settings</Text>
+          {/* Reuse slider logic here or simple buttons for size */}
+          <Text style={styles.settingLabel}>Steps: {settings.imageSteps}</Text>
+          <Slider
+            value={settings.imageSteps}
+            minimumValue={1}
+            maximumValue={8}
+            step={1}
+            onValueChange={(v) => updateSettings({ imageSteps: v })}
+            minimumTrackTintColor={COLORS.accent}
+          />
         </View>
-      </View>
-    </KeyboardAvoidingView>
-  );
+      )}
 
-  const renderModelPickerModal = () => (
-    <Modal
-      visible={showModelPicker}
-      animationType="slide"
-      presentationStyle="formSheet"
-      onRequestClose={() => setShowModelPicker(false)}
-    >
-      <SafeAreaView style={{ flex: 1, backgroundColor: swissTheme.colors.background }}>
-        <View style={styles.modalHeader}>
-          <SwissText variant="h3" weight="semibold" color="primary">
-            {activeTab === 'chat' ? 'Select Model' : 'Select Image Model'}
-          </SwissText>
-          <TouchableOpacity onPress={() => setShowModelPicker(false)}>
-            <Feather name="x" size={24} color={swissTheme.colors.text.primary} />
+      <View style={[styles.composerContainer, { paddingBottom: insets.bottom + 16 }]}>
+        <View style={styles.composerInner}>
+          <TouchableOpacity onPress={() => setShowImageSettings(!showImageSettings)} style={styles.settingsToggle}>
+            <Feather name="sliders" size={18} color={COLORS.textSecondary} />
+          </TouchableOpacity>
+          <TextInput
+            style={styles.input}
+            placeholder="Describe an image..."
+            placeholderTextColor={COLORS.textSecondary}
+            value={imagePrompt}
+            onChangeText={setImagePrompt}
+            multiline
+            editable={!isGeneratingImage}
+          />
+          <TouchableOpacity
+            onPress={handleGenerateImage}
+            disabled={isGeneratingImage || !imagePrompt.trim()}
+            style={[styles.sendButton, { backgroundColor: COLORS.accent }, (isGeneratingImage || !imagePrompt.trim()) && { opacity: 0.3 }]}
+          >
+            {isGeneratingImage ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Feather name="zap" size={20} color="#fff" />
+            )}
           </TouchableOpacity>
         </View>
-
-        <FlatList
-          data={activeTab === 'chat' ? textModels : imageModels}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              onPress={() =>
-                activeTab === 'chat'
-                  ? handleChatModelSelect(item.id)
-                  : handleImageModelSelect(item.id)
-              }
-              style={[
-                styles.modelCard,
-                (activeTab === 'chat' ? settings.model : settings.imageModel) === item.id &&
-                  styles.selectedModelCard,
-              ]}
-            >
-              <View style={{ flex: 1 }}>
-                <SwissText variant="body" weight="semibold" color="primary">
-                  {item.model_spec.name || item.id}
-                </SwissText>
-                <SwissText variant="xs" color="secondary" style={{ marginTop: swissTheme.spacing[1] }}>
-                  {item.id}
-                </SwissText>
-                {item.model_spec.capabilities && (
-                  <View style={{ flexDirection: 'row', gap: swissTheme.spacing[2], marginTop: swissTheme.spacing[2] }}>
-                    {item.model_spec.capabilities.supportsWebSearch && (
-                      <View style={styles.capabilityBadge}>
-                        <SwissText variant="xs" color="secondary">
-                          Web Search
-                        </SwissText>
-                      </View>
-                    )}
-                    {item.model_spec.capabilities.supportsReasoning && (
-                      <View style={styles.capabilityBadge}>
-                        <SwissText variant="xs" color="secondary">
-                          Reasoning
-                        </SwissText>
-                      </View>
-                    )}
-                  </View>
-                )}
-              </View>
-              {(activeTab === 'chat' ? settings.model : settings.imageModel) === item.id && (
-                <Feather name="check" size={24} color={swissTheme.colors.accent.primary} />
-              )}
-            </TouchableOpacity>
-          )}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={{ padding: swissTheme.spacing[4], gap: swissTheme.spacing[3] }}
-          scrollEnabled={true}
-        />
-      </SafeAreaView>
-    </Modal>
+      </View>
+    </View>
   );
-
-  const renderScrollToBottomButton = () => (
-    showScrollToBottom && (
-      <TouchableOpacity onPress={scrollToBottom} style={styles.scrollToBottomButton}>
-        <Feather name="arrow-down" size={20} color={swissTheme.colors.text.primary} />
-      </TouchableOpacity>
-    )
-  );
-
-  // ===== MAIN RENDER =====
 
   if (isLoadingModels) {
     return (
-      <SafeAreaView style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={swissTheme.colors.accent.primary} />
-        <SwissText variant="body" color="secondary" style={{ marginTop: swissTheme.spacing[4] }}>
-          Loading models...
-        </SwissText>
-      </SafeAreaView>
+      <View style={styles.loadingScreen}>
+        <ActivityIndicator size="large" color={COLORS.accent} />
+      </View>
     );
   }
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <StatusBar barStyle="dark" backgroundColor={swissTheme.colors.background} />
+      <StatusBar style="light" />
       {renderHeader()}
       {renderTabBar()}
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
-        keyboardVerticalOffset={0}
       >
         {activeTab === 'chat' ? (
-          <View style={styles.chatContainer}>
+          <View style={{ flex: 1 }}>
             {renderMessages()}
-            {renderScrollToBottomButton()}
             {renderComposer()}
+            {showScrollToBottom && (
+              <TouchableOpacity onPress={scrollToBottom} style={styles.scrollBtn}>
+                <Feather name="arrow-down" size={20} color={COLORS.textPrimary} />
+              </TouchableOpacity>
+            )}
           </View>
         ) : (
           renderImageTab()
         )}
       </KeyboardAvoidingView>
 
-      {renderModelPickerModal()}
+      <Modal visible={showModelPicker} animationType="slide" presentationStyle="formSheet">
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Select Model</Text>
+            <TouchableOpacity onPress={() => setShowModelPicker(false)}>
+              <Feather name="x" size={24} color={COLORS.textPrimary} />
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={activeTab === 'chat' ? textModels : imageModels}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                onPress={() => activeTab === 'chat' ? handleChatModelSelect(item.id) : handleImageModelSelect(item.id)}
+                style={[styles.modelItem, (activeTab === 'chat' ? settings.model : settings.imageModel) === item.id && styles.selectedModel]}
+              >
+                <Text style={styles.modelName}>{item.model_spec.name || item.id}</Text>
+                <Text style={styles.modelIdText}>{item.id}</Text>
+              </TouchableOpacity>
+            )}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.modalList}
+          />
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1103,265 +912,327 @@ export default function FullAppScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: swissTheme.colors.background,
+    backgroundColor: COLORS.background,
+  },
+  loadingScreen: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   header: {
+    height: 60,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: swissTheme.spacing[4],
-    paddingVertical: swissTheme.spacing[3],
-    borderBottomWidth: swissTheme.borders.width.thin,
-    borderBottomColor: swissTheme.colors.border,
-    height: 56,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
   },
   modelSelector: {
-    flex: 1,
-    marginHorizontal: swissTheme.spacing[4],
     flexDirection: 'row',
     alignItems: 'center',
-    gap: swissTheme.spacing[2],
+    backgroundColor: COLORS.surface,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    maxWidth: '60%',
+  },
+  modelSelectorText: {
+    color: COLORS.textPrimary,
+    fontSize: 14,
+    fontWeight: '600',
+    marginRight: 6,
+  },
+  headerActions: {
+    flexDirection: 'row',
   },
   iconButton: {
-    padding: swissTheme.spacing[2],
+    padding: 8,
+    marginLeft: 8,
   },
   tabBar: {
     flexDirection: 'row',
-    borderBottomWidth: swissTheme.borders.width.thin,
-    borderBottomColor: swissTheme.colors.border,
-    paddingHorizontal: swissTheme.spacing[4],
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
   },
   tab: {
-    paddingVertical: swissTheme.spacing[3],
-    paddingHorizontal: swissTheme.spacing[3],
-    marginRight: swissTheme.spacing[2],
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
   },
   activeTab: {
     borderBottomWidth: 2,
-    borderBottomColor: swissTheme.colors.accent.primary,
+    borderBottomColor: COLORS.textPrimary,
   },
-  chatContainer: {
-    flex: 1,
+  tabText: {
+    color: COLORS.textSecondary,
+    fontSize: 14,
+    fontWeight: '500',
   },
-  welcomeScroll: {
-    flexGrow: 1,
+  activeTabText: {
+    color: COLORS.textPrimary,
+  },
+  listContent: {
+    paddingBottom: 100,
+  },
+  messageRow: {
+    flexDirection: 'row',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  userRow: {
+    backgroundColor: 'transparent',
+  },
+  assistantRow: {
+    backgroundColor: 'rgba(255,255,255,0.02)',
+  },
+  userAvatar: {
+    width: 24,
+    height: 24,
+    borderRadius: 4,
+    backgroundColor: '#3b82f6',
     justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  assistantAvatar: {
+    width: 24,
+    height: 24,
+    borderRadius: 4,
+    backgroundColor: COLORS.accent,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  messageContent: {
+    flex: 1,
+    marginLeft: 16,
+  },
+  roleLabel: {
+    color: COLORS.textPrimary,
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  messageText: {
+    color: COLORS.textPrimary,
+    fontSize: 16,
+    lineHeight: 24,
+  },
+  bubble: {
+    marginTop: 4,
+  },
+  metricsText: {
+    color: COLORS.textSecondary,
+    fontSize: 11,
+    marginTop: 12,
+  },
+  codeBlock: {
+    backgroundColor: '#0d0d0d',
+    borderRadius: 8,
+    marginVertical: 12,
+    overflow: 'hidden',
+  },
+  codeHeader: {
+    backgroundColor: '#2d2d2d',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  codeHeaderText: {
+    color: '#b4b4b4',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  codeText: {
+    color: '#fff',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    padding: 16,
+    fontSize: 13,
+  },
+  composerContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 16,
+    backgroundColor: 'transparent',
+  },
+  composerInner: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    backgroundColor: COLORS.surface,
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  input: {
+    flex: 1,
+    color: COLORS.textPrimary,
+    fontSize: 16,
+    maxHeight: 200,
+    paddingTop: 8,
+    paddingBottom: 8,
+  },
+  sendButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.textPrimary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+    marginBottom: 4,
   },
   welcomeContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: swissTheme.spacing[4],
-    gap: swissTheme.spacing[6],
+    padding: 40,
   },
-  welcomeHero: {
+  logoContainer: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: swissTheme.spacing[2],
+    marginBottom: 24,
+  },
+  welcomeTitle: {
+    color: COLORS.textPrimary,
+    fontSize: 24,
+    fontWeight: '700',
+    marginBottom: 32,
   },
   suggestionsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'center',
-    gap: swissTheme.spacing[2],
-    maxWidth: 600,
+    gap: 12,
   },
   suggestionChip: {
-    backgroundColor: swissTheme.colors.white,
-    paddingVertical: swissTheme.spacing[2],
-    paddingHorizontal: swissTheme.spacing[3],
-    borderRadius: swissTheme.borders.radius.md,
-    borderWidth: swissTheme.borders.width.thin,
-    borderColor: swissTheme.colors.border,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
   },
-  listContentContainer: {
-    paddingHorizontal: swissTheme.spacing[4],
-    paddingVertical: swissTheme.spacing[3],
-    gap: swissTheme.spacing[2],
+  suggestionText: {
+    color: COLORS.textSecondary,
+    fontSize: 14,
   },
-  messageRow: {
-    flexDirection: 'row',
-    width: '100%',
-  },
-  userMessageRow: {
-    justifyContent: 'flex-end',
-  },
-  assistantMessageRow: {
-    justifyContent: 'flex-start',
-  },
-  messageBubble: {
-    maxWidth: '100%',
-    borderRadius: swissTheme.borders.radius.md,
-  },
-  userMessageBubble: {
-    backgroundColor: swissTheme.colors.white,
-    borderColor: swissTheme.colors.gray[300],
-  },
-  assistantMessageBubble: {
-    backgroundColor: swissTheme.colors.surface,
-    borderColor: swissTheme.colors.gray[200],
-  },
-  metricsContainer: {
-    marginTop: swissTheme.spacing[2],
-    opacity: 0.7,
-  },
-  codeBlock: {
-    backgroundColor: swissTheme.colors.gray[900],
-    borderRadius: swissTheme.borders.radius.md,
-    padding: swissTheme.spacing[3],
-    marginVertical: swissTheme.spacing[2],
-    borderWidth: swissTheme.borders.width.thin,
-    borderColor: swissTheme.colors.gray[800],
-  },
-  codeText: {
-    fontFamily: swissTheme.typography.fontFamily.mono,
-    fontSize: swissTheme.typography.fontSize.xs,
-    color: swissTheme.colors.gray[100],
-  },
-  composerContainer: {
-    backgroundColor: swissTheme.colors.background,
-    borderTopWidth: swissTheme.borders.width.thin,
-    borderTopColor: swissTheme.colors.border,
-    paddingHorizontal: swissTheme.spacing[4],
-    paddingTop: swissTheme.spacing[3],
-  },
-  composer: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    backgroundColor: swissTheme.colors.white,
-    borderRadius: swissTheme.borders.radius.md,
-    borderWidth: swissTheme.borders.width.thin,
-    borderColor: swissTheme.colors.gray[300],
-    paddingHorizontal: swissTheme.spacing[3],
-    minHeight: 44,
-  },
-  input: {
-    flex: 1,
-    color: swissTheme.colors.text.primary,
-    fontSize: swissTheme.typography.fontSize.base,
-    fontFamily: swissTheme.typography.fontFamily.primary,
-    paddingVertical: swissTheme.spacing[3],
-    paddingHorizontal: swissTheme.spacing[2],
-    maxHeight: 100,
-  },
-  sendButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: swissTheme.colors.accent.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    margin: swissTheme.spacing[1],
-  },
-  imageContainer: {
-    flex: 1,
-  },
-  imageContent: {
-    paddingHorizontal: swissTheme.spacing[4],
-    paddingVertical: swissTheme.spacing[4],
-    gap: swissTheme.spacing[4],
-  },
-  imageSettingsPanel: {
-    marginHorizontal: swissTheme.spacing[4],
-    marginBottom: swissTheme.spacing[4],
-  },
-  settingGroup: {
-    gap: swissTheme.spacing[2],
-  },
-  sizeChip: {
-    paddingVertical: swissTheme.spacing[2],
-    paddingHorizontal: swissTheme.spacing[3],
-    borderRadius: swissTheme.borders.radius.md,
-    backgroundColor: swissTheme.colors.white,
-    borderWidth: swissTheme.borders.width.thin,
-    borderColor: swissTheme.colors.border,
-  },
-  activeSizeChip: {
-    backgroundColor: swissTheme.colors.accent.primary,
-    borderColor: swissTheme.colors.accent.primary,
-  },
-  generatedCard: {
-    borderRadius: swissTheme.borders.radius.md,
-    overflow: 'hidden',
-    backgroundColor: swissTheme.colors.surface,
-    borderWidth: swissTheme.borders.width.thin,
-    borderColor: swissTheme.colors.border,
-    minHeight: 300,
-  },
-  generatedImage: {
-    width: '100%',
-    backgroundColor: swissTheme.colors.gray[900],
-  },
-  cardOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    paddingHorizontal: swissTheme.spacing[3],
-    paddingVertical: swissTheme.spacing[3],
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
-  },
-  downloadButton: {
-    padding: swissTheme.spacing[2],
-  },
-  errorBanner: {
-    backgroundColor: swissTheme.colors.error,
-    opacity: 0.1,
-    borderWidth: swissTheme.borders.width.thin,
-    borderColor: swissTheme.colors.error,
-    padding: swissTheme.spacing[3],
-    borderRadius: swissTheme.borders.radius.md,
-    marginHorizontal: swissTheme.spacing[4],
-    marginTop: swissTheme.spacing[3],
-  },
-  scrollToBottomButton: {
+  scrollBtn: {
     position: 'absolute',
     bottom: 120,
-    right: swissTheme.spacing[4],
+    right: 20,
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: swissTheme.colors.white,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: swissTheme.borders.width.thin,
-    borderColor: swissTheme.colors.border,
-    ...swissTheme.shadows.subtle,
   },
-  loadingContainer: {
+  imageTabContainer: {
     flex: 1,
+  },
+  imageScrollContent: {
+    padding: 16,
+    paddingBottom: 100,
+  },
+  imageWelcome: {
+    alignItems: 'center',
+    marginTop: 60,
+  },
+  welcomeSubtitle: {
+    color: COLORS.textSecondary,
+    fontSize: 16,
+  },
+  imageGrid: {
+    gap: 16,
+  },
+  imageCard: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: COLORS.surface,
+  },
+  genImage: {
+    width: '100%',
+  },
+  imgDownloadBtn: {
+    position: 'absolute',
+    bottom: 12,
+    right: 12,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: swissTheme.colors.background,
+  },
+  imageSettingsPanel: {
+    backgroundColor: COLORS.surface,
+    margin: 16,
+    padding: 20,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  settingsPanelTitle: {
+    color: COLORS.textPrimary,
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 16,
+  },
+  settingLabel: {
+    color: COLORS.textSecondary,
+    fontSize: 14,
+    marginBottom: 8,
+  },
+  settingsToggle: {
+    padding: 8,
+    marginRight: 4,
+    marginBottom: 4,
+  },
+  modalContent: {
+    flex: 1,
+    backgroundColor: COLORS.background,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: swissTheme.spacing[4],
-    paddingVertical: swissTheme.spacing[3],
-    borderBottomWidth: swissTheme.borders.width.thin,
-    borderBottomColor: swissTheme.colors.border,
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
   },
-  modelCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: swissTheme.spacing[3],
-    backgroundColor: swissTheme.colors.white,
-    borderWidth: swissTheme.borders.width.thin,
-    borderColor: swissTheme.colors.border,
-    borderRadius: swissTheme.borders.radius.md,
+  modalTitle: {
+    color: COLORS.textPrimary,
+    fontSize: 18,
+    fontWeight: '700',
   },
-  selectedModelCard: {
-    borderColor: swissTheme.colors.accent.primary,
-    borderWidth: swissTheme.borders.width.medium,
+  modalList: {
+    padding: 16,
   },
-  capabilityBadge: {
-    backgroundColor: swissTheme.colors.gray[100],
-    paddingVertical: swissTheme.spacing[1],
-    paddingHorizontal: swissTheme.spacing[2],
-    borderRadius: swissTheme.borders.radius.sm,
+  modelItem: {
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  selectedModel: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  modelIdText: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    marginTop: 4,
   },
 });

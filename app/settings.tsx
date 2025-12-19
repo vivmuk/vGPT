@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import Slider from '@react-native-community/slider';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
@@ -22,8 +22,17 @@ import { DEFAULT_SETTINGS } from '@/constants/settings';
 import { AppSettings, WebSearchMode } from '@/types/settings';
 import { VeniceModel } from '@/types/venice';
 import { loadStoredSettings, persistSettings } from '@/utils/settingsStorage';
-import { theme } from '@/constants/theme';
 import { VENICE_API_KEY, VENICE_MODELS_ENDPOINT } from '@/constants/venice';
+
+const COLORS = {
+  background: '#212121',
+  surface: '#2f2f2f',
+  border: '#3c3c3c',
+  textPrimary: '#ececec',
+  textSecondary: '#b4b4b4',
+  accent: '#10a37f',
+  error: '#ef4444',
+};
 
 const getConstraintNumber = (constraint: any): number | undefined => {
   if (constraint == null) return undefined;
@@ -59,27 +68,14 @@ const getModelDefaultMaxTokens = (model?: VeniceModel | null): number | undefine
 };
 
 const resolveUsdPrice = (pricingSection: unknown): number | undefined => {
-  if (pricingSection == null) {
-    return undefined;
-  }
-
-  if (typeof pricingSection === 'number') {
-    return pricingSection;
-  }
-
+  if (pricingSection == null) return undefined;
+  if (typeof pricingSection === 'number') return pricingSection;
   if (typeof pricingSection === 'object' && 'usd' in (pricingSection as Record<string, unknown>)) {
     const value = (pricingSection as Record<string, unknown>).usd;
     return typeof value === 'number' ? value : undefined;
   }
-
   return undefined;
 };
-
-const palette = theme.colors;
-const space = theme.spacing;
-const radii = theme.radius;
-const fonts = theme.fonts;
-const shadow = theme.shadows;
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -91,10 +87,8 @@ export default function SettingsScreen() {
 
   useEffect(() => {
     let isMounted = true;
-
     (async () => {
       const stored = await loadStoredSettings<AppSettings>(DEFAULT_SETTINGS);
-      // Validate and clamp imageGuidanceScale to valid range (1-20)
       if (stored.imageGuidanceScale !== undefined) {
         stored.imageGuidanceScale = Math.max(1, Math.min(20, stored.imageGuidanceScale));
       }
@@ -102,16 +96,12 @@ export default function SettingsScreen() {
         setSettings((prev: AppSettings) => ({ ...prev, ...stored }));
       }
     })();
-
-    return () => {
-      isMounted = false;
-    };
+    return () => { isMounted = false; };
   }, []);
 
   const updateSettings = useCallback((newSettings: Partial<AppSettings>) => {
     setSettings((prev: AppSettings) => {
       const updated = { ...prev, ...newSettings };
-      // Validate and clamp imageGuidanceScale to valid range (1-20)
       if (updated.imageGuidanceScale !== undefined) {
         updated.imageGuidanceScale = Math.max(1, Math.min(20, updated.imageGuidanceScale));
       }
@@ -125,23 +115,13 @@ export default function SettingsScreen() {
     try {
       const response = await fetch(VENICE_MODELS_ENDPOINT, {
         method: 'GET',
-        headers: {
-          Authorization: `Bearer ${VENICE_API_KEY}`,
-        },
+        headers: { Authorization: `Bearer ${VENICE_API_KEY}` },
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Venice API error: ${response.status} - ${errorText}`);
-      }
+      if (!response.ok) throw new Error(`Venice API error: ${response.status}`);
 
       const data = await response.json();
-      const incomingModels: VeniceModel[] = Array.isArray(data?.data)
-        ? data.data
-        : Array.isArray(data?.models)
-        ? data.models
-        : [];
-
+      const incomingModels: VeniceModel[] = Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
       setModels(incomingModels);
     } catch (error) {
       console.error('Failed to load models:', error);
@@ -151,19 +131,11 @@ export default function SettingsScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    loadModels();
-  }, [loadModels]);
+  useEffect(() => { loadModels(); }, [loadModels]);
 
   const handleSliderChange = useCallback((key: keyof AppSettings, value: number) => {
-    if (Platform.OS !== 'web') {
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
+    if (Platform.OS !== 'web') void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     updateSettings({ [key]: value } as Partial<AppSettings>);
-  }, [updateSettings]);
-
-  const handleWebSearchChange = useCallback((value: WebSearchMode) => {
-    updateSettings({ webSearch: value });
   }, [updateSettings]);
 
   const handleModelSelect = useCallback((modelId: string) => {
@@ -171,23 +143,16 @@ export default function SettingsScreen() {
     if (!selectedModel) return;
 
     const updates: Partial<AppSettings> = { model: modelId };
-
-    // Apply model defaults from constraints
     const constraints = selectedModel.model_spec.constraints || {};
 
-    // Temperature
     const defaultTemp = getConstraintNumber(constraints.temperature);
     if (defaultTemp !== undefined) updates.temperature = defaultTemp;
 
-    // Top P
     const defaultTopP = getConstraintNumber(constraints.top_p);
     if (defaultTopP !== undefined) updates.topP = defaultTopP;
-    
-    // Max Tokens
+
     const defaultMaxTokens = getModelDefaultMaxTokens(selectedModel);
-    if (defaultMaxTokens && defaultMaxTokens > 0) {
-      updates.maxTokens = defaultMaxTokens;
-    }
+    if (defaultMaxTokens && defaultMaxTokens > 0) updates.maxTokens = defaultMaxTokens;
 
     updateSettings(updates);
     setShowModelPicker(false);
@@ -208,12 +173,11 @@ export default function SettingsScreen() {
 
     const defaultMaxTokens = getModelDefaultMaxTokens(selectedModel);
     if (defaultMaxTokens !== undefined) updates.maxTokens = defaultMaxTokens;
-    
-    // Other defaults usually global but can be reset to DEFAULT_SETTINGS if model specific not found
+
     if (updates.temperature === undefined) updates.temperature = DEFAULT_SETTINGS.temperature;
     if (updates.topP === undefined) updates.topP = DEFAULT_SETTINGS.topP;
     if (updates.maxTokens === undefined) updates.maxTokens = DEFAULT_SETTINGS.maxTokens;
-    
+
     updates.minP = DEFAULT_SETTINGS.minP;
     updates.topK = DEFAULT_SETTINGS.topK;
     updates.repetitionPenalty = DEFAULT_SETTINGS.repetitionPenalty;
@@ -230,303 +194,128 @@ export default function SettingsScreen() {
   const currentModel = useMemo(() => models.find((m: VeniceModel) => m.id === settings.model), [models, settings.model]);
   const currentModelMaxTokens = useMemo(() => getModelDefaultMaxTokens(currentModel), [currentModel]);
 
-  const getSettingExplanation = (key: string) => {
-    const explanations: Record<string, string> = {
-      'temperature': 'Controls randomness. Lower values make responses more focused and deterministic, higher values increase creativity and variety.',
-      'topP': 'Controls diversity via nucleus sampling. Lower values focus on more likely tokens, higher values allow more diverse responses.',
-      'minP': 'Sets minimum probability threshold for token selection. Helps filter out very unlikely tokens.',
-      'maxTokens': 'Maximum number of tokens (words/parts) the AI can generate in its response.',
-      'topK': 'Limits token selection to the K most likely tokens. Lower values make responses more focused.',
-      'repetitionPenalty': 'Reduces repetition by penalizing recently used tokens. Values > 1 discourage repetition.'
-    };
-    return explanations[key] || '';
-  };
-
-  const renderSliderSetting = (
-    title: string,
-    icon: string,
-    value: number,
-    min: number,
-    max: number,
-    step: number,
-    settingKey: keyof AppSettings,
-    color: string = palette.accent
-  ) => (
-    <View style={styles.settingContainer}>
-      <View style={styles.settingHeader}>
-        <View style={styles.settingTitleContainer}>
-          <Text style={styles.settingIcon}>{icon}</Text>
-          <Text style={styles.settingTitle}>{title}</Text>
-        </View>
-        <Text style={[styles.settingValue, { color }]}>
-          {value.toFixed(step < 1 ? 2 : 0)}
-        </Text>
-      </View>
-
-      <Text style={styles.settingExplanation}>
-        {getSettingExplanation(settingKey as string)}
-      </Text>
-
-      <View style={styles.sliderContainer}>
-        <TouchableOpacity
-          style={styles.sliderButton}
-          onPress={() => handleSliderChange(settingKey, Math.max(min, value - step))}
-        >
-          <Ionicons name="remove" size={16} color={color} />
-        </TouchableOpacity>
-
-        <Slider
-          style={styles.slider}
-          minimumValue={min}
-          maximumValue={max}
-          step={step}
-          value={value}
-          onValueChange={(val: number) => handleSliderChange(settingKey, val)}
-          minimumTrackTintColor={color}
-          maximumTrackTintColor={palette.border}
-          thumbTintColor={color}
-        />
-
-        <TouchableOpacity
-          style={styles.sliderButton}
-          onPress={() => handleSliderChange(settingKey, Math.min(max, value + step))}
-        >
-          <Ionicons name="add" size={16} color={color} />
-        </TouchableOpacity>
-      </View>
+  const renderSection = (title: string, children: React.ReactNode) => (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <View style={styles.sectionContent}>{children}</View>
     </View>
   );
 
-  const renderModelItem = useCallback(({ item }: { item: VeniceModel }) => {
-    const availableContext = item.model_spec.availableContextTokens;
-    const metaParts: string[] = [];
-    if (typeof availableContext === 'number' && availableContext > 0) {
-      metaParts.push(`${Math.round((availableContext / 1000) * 10) / 10}K context`);
-    }
-    const quantization = item.model_spec.capabilities?.quantization;
-    if (quantization) {
-      metaParts.push(quantization);
-    }
-    const metaText = metaParts.length > 0 ? metaParts.join(' • ') : 'Specs unavailable';
-
-    const capabilities = item.model_spec.capabilities || {};
-    const inputUsd = resolveUsdPrice(item.model_spec.pricing?.input);
-    const outputUsd = resolveUsdPrice(item.model_spec.pricing?.output);
-
-    return (
-      <TouchableOpacity
-        style={[
-          styles.modelItem,
-          settings.model === item.id && styles.selectedModelItem
-        ]}
-        onPress={() => handleModelSelect(item.id)}
-      >
-        <View style={styles.modelInfo}>
-          <View style={styles.modelHeader}>
-            <Text style={styles.modelName}>{item.model_spec.name}</Text>
-            {item.model_spec.beta && (
-              <Text style={styles.betaTag}>BETA</Text>
-            )}
-          </View>
-          <Text style={styles.modelId}>{item.id}</Text>
-          <Text style={styles.contextTokens}>{metaText}</Text>
-          <View style={styles.modelCapabilities}>
-            {capabilities.supportsWebSearch && (
-              <Text style={styles.capabilityTag}>🌐 Web</Text>
-            )}
-            {capabilities.supportsReasoning && (
-              <Text style={styles.capabilityTag}>🧠 Reasoning</Text>
-            )}
-            {capabilities.optimizedForCode && (
-              <Text style={styles.capabilityTag}>💻 Code</Text>
-            )}
-            {capabilities.supportsVision && (
-              <Text style={styles.capabilityTag}>👁️ Vision</Text>
-            )}
-            {capabilities.supportsFunctionCalling && (
-              <Text style={styles.capabilityTag}>🔧 Functions</Text>
-            )}
-          </View>
-        </View>
-
-        <View style={styles.modelPricing}>
-          <Text style={styles.pricingText}>
-            {inputUsd != null ? `$${inputUsd}/1M in` : '—'}
-          </Text>
-          <Text style={styles.pricingText}>
-            {outputUsd != null ? `$${outputUsd}/1M out` : '—'}
-          </Text>
-        </View>
-
-        {settings.model === item.id && (
-          <Ionicons name="checkmark-circle" size={24} color={palette.accentStrong} />
-        )}
-      </TouchableOpacity>
-    );
-  }, [handleModelSelect, settings.model]);
-
-
+  const renderSlider = (label: string, value: number, min: number, max: number, step: number, settingKey: keyof AppSettings) => (
+    <View style={styles.settingItem}>
+      <View style={styles.settingHeader}>
+        <Text style={styles.settingLabel}>{label}</Text>
+        <Text style={styles.settingValue}>{value.toFixed(step < 1 ? 2 : 0)}</Text>
+      </View>
+      <Slider
+        style={styles.slider}
+        minimumValue={min}
+        maximumValue={max}
+        step={step}
+        value={value}
+        onValueChange={(val) => handleSliderChange(settingKey, val)}
+        minimumTrackTintColor={COLORS.accent}
+        maximumTrackTintColor={COLORS.border}
+        thumbTintColor={COLORS.accent}
+      />
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
-      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => router.back()}
-        >
-          <Ionicons name="arrow-back" size={24} color={palette.accentStrong} />
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <Feather name="arrow-left" size={24} color={COLORS.textPrimary} />
         </TouchableOpacity>
-        
         <Text style={styles.headerTitle}>Settings</Text>
-        
-        <View style={styles.headerSpacer} />
+        <TouchableOpacity onPress={resetToDefaults} style={styles.resetButton}>
+          <Feather name="refresh-cw" size={20} color={COLORS.textPrimary} />
+        </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Model Selection */}
-        <TouchableOpacity 
-          style={styles.modelSelector}
-          onPress={() => setShowModelPicker(true)}
-        >
-          <View style={styles.settingTitleContainer}>
-            <Text style={styles.settingIcon}>🤖</Text>
-            <Text style={styles.settingTitle}>Model</Text>
-          </View>
-          <View style={styles.modelSelectorRight}>
-            <Text style={styles.selectedModelText}>
-              {getModelDisplayName(settings.model)}
-            </Text>
-            <Ionicons name="chevron-forward" size={20} color={palette.textMuted} />
-          </View>
-        </TouchableOpacity>
+      <ScrollView style={styles.content}>
+        {renderSection('Model', (
+          <TouchableOpacity onPress={() => setShowModelPicker(true)} style={styles.modelPickerBtn}>
+            <Text style={styles.modelName}>{getModelDisplayName(settings.model)}</Text>
+            <Feather name="chevron-right" size={20} color={COLORS.textSecondary} />
+          </TouchableOpacity>
+        ))}
 
-        {/* Reset Defaults Button */}
-        <TouchableOpacity 
-          style={styles.resetButton}
-          onPress={resetToDefaults}
-        >
-           <Ionicons name="refresh-circle-outline" size={24} color={palette.accentStrong} />
-           <Text style={styles.resetButtonText}>Reset to Model Defaults</Text>
-        </TouchableOpacity>
-
-        {/* Web Search */}
-        <View style={styles.settingContainer}>
-          <View style={styles.settingTitleContainer}>
-            <Text style={styles.settingIcon}>🌐</Text>
-            <Text style={styles.settingTitle}>Web Search</Text>
-          </View>
-          
-          <Text style={styles.settingExplanation}>
-            Controls whether the AI can search the web for current information. Auto lets the AI decide when to search.
-          </Text>
-          
-          <View style={styles.webSearchButtons}>
+        {renderSection('Web Search', (
+          <View style={styles.segmentedControl}>
             {(['off', 'auto', 'on'] as const).map((option) => (
               <TouchableOpacity
                 key={option}
-                style={[
-                  styles.webSearchButton,
-                  settings.webSearch === option && styles.webSearchButtonActive
-                ]}
-                onPress={() => handleWebSearchChange(option)}
+                style={[styles.segment, settings.webSearch === option && styles.segmentActive]}
+                onPress={() => updateSettings({ webSearch: option })}
               >
-                <Text style={[
-                  styles.webSearchButtonText,
-                  settings.webSearch === option && styles.webSearchButtonTextActive
-                ]}>
-                  {option.charAt(0).toUpperCase() + option.slice(1)}
+                <Text style={[styles.segmentText, settings.webSearch === option && styles.segmentTextActive]}>
+                  {option.toUpperCase()}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
-        </View>
+        ))}
 
-        {/* System Prompt & Venice Features */}
-        <View style={styles.settingContainer}>
-          <View style={styles.settingHeader}>
-            <View style={styles.settingTitleContainer}>
-              <Text style={styles.settingIcon}>✨</Text>
-              <Text style={styles.settingTitle}>Venice Features</Text>
+        {renderSection('Capabilities', (
+          <>
+            <View style={styles.switchRow}>
+              <Text style={styles.switchLabel}>Include Venice System Prompt</Text>
+              <Switch
+                value={settings.includeVeniceSystemPrompt}
+                onValueChange={(v) => updateSettings({ includeVeniceSystemPrompt: v })}
+                trackColor={{ false: COLORS.border, true: COLORS.accent }}
+              />
             </View>
-          </View>
-           <View style={styles.switchRow}>
-            <Text style={styles.switchLabel}>Include Venice System Prompt</Text>
-            <Switch
-              value={settings.includeVeniceSystemPrompt}
-              onValueChange={(val: boolean) => updateSettings({ includeVeniceSystemPrompt: val })}
-              trackColor={{ false: palette.surfaceActive, true: palette.accent }}
-              thumbColor={Platform.OS === 'ios' ? '#fff' : (settings.includeVeniceSystemPrompt ? palette.accentStrong : '#f4f3f4')}
-            />
-          </View>
-          <Text style={styles.settingExplanation}>
-            Includes Venice's default system prompts for uncensored and natural responses.
-          </Text>
+            <View style={[styles.switchRow, { marginTop: 16 }]}>
+              <Text style={styles.switchLabel}>Web Citations</Text>
+              <Switch
+                value={settings.webCitations}
+                onValueChange={(v) => updateSettings({ webCitations: v })}
+                trackColor={{ false: COLORS.border, true: COLORS.accent }}
+              />
+            </View>
+          </>
+        ))}
 
-           <View style={[styles.switchRow, { marginTop: space.md }]}>
-            <Text style={styles.switchLabel}>Web Citations</Text>
-            <Switch
-              value={settings.webCitations}
-              onValueChange={(val: boolean) => updateSettings({ webCitations: val })}
-              trackColor={{ false: palette.surfaceActive, true: palette.accent }}
-              thumbColor={Platform.OS === 'ios' ? '#fff' : (settings.webCitations ? palette.accentStrong : '#f4f3f4')}
-            />
-          </View>
-        </View>
-
-        {/* Sliders */}
-        {renderSliderSetting('Temperature', '🌡️', settings.temperature, 0, 2, 0.01, 'temperature')}
-        {renderSliderSetting('Top P', '🎯', settings.topP, 0, 1, 0.01, 'topP')}
-        {renderSliderSetting('Min P', '📊', settings.minP, 0, 1, 0.01, 'minP')}
-        {renderSliderSetting(
-          'Max Tokens',
-          '📝',
-          settings.maxTokens,
-          1,
-          Math.max(currentModelMaxTokens || 8192, settings.maxTokens || 1),
-          1,
-          'maxTokens',
-          palette.success
-        )}
-        {renderSliderSetting('Top K', '🔢', settings.topK, 1, 100, 1, 'topK', palette.warning)}
-        {renderSliderSetting('Repetition Penalty', '🔄', settings.repetitionPenalty, 0.5, 2, 0.01, 'repetitionPenalty', palette.danger)}
+        {renderSection('Parameters', (
+          <>
+            {renderSlider('Temperature', settings.temperature, 0, 2, 0.01, 'temperature')}
+            {renderSlider('Top P', settings.topP, 0, 1, 0.01, 'topP')}
+            {renderSlider('Min P', settings.minP, 0, 1, 0.01, 'minP')}
+            {renderSlider('Max Tokens', settings.maxTokens, 1, currentModelMaxTokens || 8192, 1, 'maxTokens')}
+          </>
+        ))}
       </ScrollView>
 
-      {/* Model Picker Modal */}
-      <Modal
-        visible={showModelPicker}
-        animationType="slide"
-        presentationStyle="pageSheet"
-      >
-        <SafeAreaView style={styles.modalContainer}>
+      <Modal visible={showModelPicker} animationType="slide" presentationStyle="formSheet">
+        <View style={styles.modalContent}>
           <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowModelPicker(false)}>
-              <Text style={styles.modalCancelText}>Cancel</Text>
-            </TouchableOpacity>
             <Text style={styles.modalTitle}>Select Model</Text>
-            <View style={styles.headerSpacer} />
+            <TouchableOpacity onPress={() => setShowModelPicker(false)}>
+              <Feather name="x" size={24} color={COLORS.textPrimary} />
+            </TouchableOpacity>
           </View>
-          
-          {isLoadingModels ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="small" color={palette.accent} />
-              <Text style={styles.loadingText}>Loading models...</Text>
-            </View>
-          ) : (
-            <FlatList
-              data={models}
-              renderItem={renderModelItem}
-              keyExtractor={(item: VeniceModel) => item.id}
-              contentContainerStyle={styles.modelList}
-              ListEmptyComponent={(
-                <View style={styles.loadingContainer}>
-                  <Text style={styles.emptyModelsText}>No models available.</Text>
-                </View>
-              )}
-            />
-          )}
-        </SafeAreaView>
+          <FlatList
+            data={models}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                onPress={() => handleModelSelect(item.id)}
+                style={[styles.modelItem, settings.model === item.id && styles.selectedModel]}
+              >
+                <Text style={styles.modelItemName}>{item.model_spec.name || item.id}</Text>
+                <Text style={styles.modelItemId}>{item.id}</Text>
+                {settings.model === item.id && (
+                  <View style={styles.checkIcon}>
+                    <Feather name="check" size={20} color={COLORS.accent} />
+                  </View>
+                )}
+              </TouchableOpacity>
+            )}
+            keyExtractor={(item) => item.id}
+          />
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -535,290 +324,75 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: palette.background,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: palette.background,
-  },
-  loadingText: {
-    marginTop: space.sm,
-    fontSize: 14,
-    color: palette.textSecondary,
-    fontFamily: fonts.medium,
-  },
-  emptyModelsText: {
-    fontSize: 16,
-    color: palette.textSecondary,
-    fontFamily: fonts.medium,
+    backgroundColor: COLORS.background,
   },
   header: {
+    height: 60,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: space.lg,
-    paddingVertical: space.md,
-    backgroundColor: palette.surface,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: palette.divider,
-    ...shadow.subtle,
-  },
-  backButton: {
-    padding: space.sm,
-    borderRadius: radii.sm,
-    backgroundColor: palette.surfaceActive,
-    borderWidth: 1,
-    borderColor: palette.border,
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
   },
   headerTitle: {
-    flex: 1,
-    fontSize: 20,
-    color: palette.textPrimary,
-    textAlign: 'center',
-    fontFamily: fonts.semibold,
-    letterSpacing: 0.5,
-  },
-  headerSpacer: {
-    width: 40,
-  },
-  content: {
-    flex: 1,
-    paddingVertical: space.xl,
-  },
-  settingContainer: {
-    backgroundColor: palette.surfaceElevated,
-    marginHorizontal: space.lg,
-    marginVertical: space.sm,
-    padding: space.lg,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: palette.border,
-    gap: space.md,
-    ...shadow.subtle,
-  },
-  settingHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  settingTitleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-  },
-  settingIcon: {
-    fontSize: 20,
-    color: palette.accentStrong,
-  },
-  settingTitle: {
-    fontSize: 16,
-    color: palette.textPrimary,
-    fontFamily: fonts.semibold,
-  },
-  settingValue: {
-    fontSize: 16,
-    color: palette.accentStrong,
-    fontFamily: fonts.semibold,
-  },
-  settingExplanation: {
-    fontSize: 14,
-    color: palette.textSecondary,
-    lineHeight: 20,
-    fontFamily: fonts.regular,
-  },
-  sliderContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-  },
-  sliderButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: palette.surfaceActive,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: palette.border,
-  },
-  slider: {
-    flex: 1,
-    height: 40,
-  },
-  modelSelector: {
-    backgroundColor: palette.surfaceElevated,
-    marginHorizontal: space.lg,
-    marginVertical: space.sm,
-    padding: space.lg,
-    borderRadius: radii.lg,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: palette.border,
-    ...shadow.subtle,
-  },
-  modelSelectorRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-  },
-  selectedModelText: {
-    color: palette.textPrimary,
-    fontFamily: fonts.medium,
-  },
-  webSearchButtons: {
-    flexDirection: 'row',
-    gap: space.sm,
-    marginTop: space.md,
-  },
-  webSearchButton: {
-    flex: 1,
-    paddingVertical: space.md,
-    paddingHorizontal: space.lg,
-    borderRadius: radii.md,
-    backgroundColor: palette.surfaceActive,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: palette.border,
-  },
-  webSearchButtonActive: {
-    backgroundColor: palette.accent,
-    borderColor: palette.accent,
-  },
-  webSearchButtonText: {
-    fontSize: 14,
-    color: palette.textSecondary,
-    fontFamily: fonts.medium,
-  },
-  webSearchButtonTextActive: {
-    color: palette.textPrimary,
-    fontFamily: fonts.medium,
-  },
-  modalContainer: {
-    flex: 1,
-    backgroundColor: palette.backgroundMuted,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: space.lg,
-    paddingVertical: space.md,
-    backgroundColor: palette.surface,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: palette.divider,
-  },
-  modalCancelText: {
-    fontSize: 16,
-    color: palette.accent,
-    fontFamily: fonts.medium,
-  },
-  modalTitle: {
-    flex: 1,
+    color: COLORS.textPrimary,
     fontSize: 18,
-    fontFamily: fonts.semibold,
-    color: palette.textPrimary,
-    textAlign: 'center',
+    fontWeight: '700',
   },
-  modelList: {
-    paddingVertical: space.md,
+  backButton: { padding: 8 },
+  resetButton: { padding: 8 },
+  content: { flex: 1 },
+  section: {
+    marginTop: 24,
+    paddingHorizontal: 16,
   },
-  modelItem: {
-    backgroundColor: palette.surfaceElevated,
-    marginHorizontal: space.lg,
-    marginVertical: space.xs,
-    padding: space.lg,
-    borderRadius: radii.lg,
-    flexDirection: 'row',
-    alignItems: 'center',
+  sectionTitle: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  sectionContent: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 12,
+    padding: 16,
     borderWidth: 1,
-    borderColor: palette.border,
-    ...shadow.subtle,
+    borderColor: COLORS.border,
   },
-  selectedModelItem: {
-    borderColor: palette.accent,
-    shadowColor: palette.glow,
-    shadowOpacity: 0.5,
-    elevation: 8,
-  },
-  modelInfo: {
-    flex: 1,
-    gap: space.xs,
-  },
-  modelHeader: {
+  modelPickerBtn: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: space.xs,
-    gap: space.xs,
   },
   modelName: {
+    color: COLORS.textPrimary,
     fontSize: 16,
-    fontFamily: fonts.semibold,
-    color: palette.textPrimary,
+    fontWeight: '500',
+  },
+  segmentedControl: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.background,
+    borderRadius: 8,
+    padding: 4,
+  },
+  segment: {
     flex: 1,
-  },
-  betaTag: {
-    fontSize: 10,
-    fontFamily: fonts.medium,
-    color: palette.accentStrong,
-    backgroundColor: palette.accentSoft,
-    paddingHorizontal: space.sm,
-    paddingVertical: 2,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: palette.accent,
-  },
-  modelId: {
-    fontSize: 13,
-    color: palette.textMuted,
-    fontFamily: fonts.medium,
-  },
-  contextTokens: {
-    fontSize: 12,
-    color: palette.textMuted,
-    fontFamily: fonts.regular,
-  },
-  modelCapabilities: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: space.xs,
-  },
-  capabilityTag: {
-    fontSize: 12,
-    color: palette.accentStrong,
-    backgroundColor: palette.accentSoft,
-    paddingHorizontal: space.sm,
-    paddingVertical: 2,
-    borderRadius: radii.pill,
-  },
-  modelPricing: {
-    alignItems: 'flex-end',
-    marginRight: space.md,
-    gap: space.xs,
-  },
-  pricingText: {
-    fontSize: 12,
-    color: palette.textMuted,
-    fontFamily: fonts.medium,
-  },
-  resetButton: {
-    marginHorizontal: space.lg,
-    marginBottom: space.md,
-    flexDirection: 'row',
+    paddingVertical: 8,
     alignItems: 'center',
-    justifyContent: 'center',
-    padding: space.md,
-    backgroundColor: palette.surfaceActive,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: palette.border,
-    gap: space.sm,
+    borderRadius: 6,
   },
-  resetButtonText: {
-    color: palette.accentStrong,
-    fontFamily: fonts.medium,
-    fontSize: 16,
+  segmentActive: {
+    backgroundColor: COLORS.surface,
+  },
+  segmentText: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  segmentTextActive: {
+    color: COLORS.textPrimary,
   },
   switchRow: {
     flexDirection: 'row',
@@ -826,8 +400,69 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   switchLabel: {
+    color: COLORS.textPrimary,
+    fontSize: 15,
+  },
+  settingItem: {
+    marginBottom: 20,
+  },
+  settingHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  settingLabel: {
+    color: COLORS.textPrimary,
+    fontSize: 15,
+  },
+  settingValue: {
+    color: COLORS.accent,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  slider: {
+    height: 30,
+    marginHorizontal: -8,
+  },
+  modalContent: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  modalTitle: {
+    color: COLORS.textPrimary,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  modelItem: {
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  selectedModel: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  modelItemName: {
+    color: COLORS.textPrimary,
     fontSize: 16,
-    color: palette.textPrimary,
-    fontFamily: fonts.medium,
+    fontWeight: '600',
+  },
+  modelItemId: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    marginTop: 4,
+  },
+  checkIcon: {
+    position: 'absolute',
+    right: 20,
+    top: '50%',
+    marginTop: -10,
   },
 });
