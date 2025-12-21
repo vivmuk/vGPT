@@ -9,10 +9,8 @@ import {
   Alert,
   Modal,
   FlatList,
-  Linking,
   ScrollView,
   ActivityIndicator,
-  useWindowDimensions,
   LayoutAnimation,
   UIManager,
   Share,
@@ -63,19 +61,32 @@ interface GeneratedImage {
   height?: number;
 }
 
-const COLORS = {
-  background: '#212121', // ChatGPT dark background
-  sidebar: '#171717',
-  textPrimary: '#ececec',
-  textSecondary: '#b4b4b4',
-  border: '#3c3c3c',
-  accent: '#10a37f', // ChatGPT green
-  userBubble: '#2f2f2f',
-  assistantBubble: 'transparent',
-  surface: '#2f2f2f',
-  error: '#ef4444',
-  warning: '#f59e0b',
-  success: '#10b981',
+// Futuristic Indian Flag Color Palette
+const THEME = {
+  // Core colors from Indian flag
+  saffron: '#FF6B35',      // Vibrant saffron (courage & sacrifice)
+  white: '#FFFFFF',        // Pure white (peace & truth)
+  navy: '#000080',         // Navy blue (Ashoka Chakra)
+  green: '#138808',        // India green (fertility & growth)
+
+  // Dark futuristic base
+  background: '#0a0a0f',   // Deep space black
+  surface: '#12121a',      // Elevated surface
+  surfaceLight: '#1a1a24', // Lighter surface
+
+  // Text hierarchy
+  textPrimary: '#FFFFFF',
+  textSecondary: 'rgba(255, 255, 255, 0.7)',
+  textMuted: 'rgba(255, 255, 255, 0.4)',
+
+  // Borders & accents
+  border: 'rgba(255, 107, 53, 0.2)',        // Saffron border
+  borderLight: 'rgba(255, 255, 255, 0.08)',
+
+  // Gradients (for glows)
+  glowSaffron: 'rgba(255, 107, 53, 0.15)',
+  glowNavy: 'rgba(0, 0, 128, 0.2)',
+  glowGreen: 'rgba(19, 136, 8, 0.15)',
 };
 
 const isImageModel = (model?: VeniceModel | null): boolean => {
@@ -105,15 +116,14 @@ const resolveUsdPrice = (pricingSection: unknown): number | undefined => {
 
 const SUGGESTIONS = [
   "Explain quantum computing",
-  "Write a cyberpunk haiku",
+  "Write a futuristic haiku",
   "Debug this React code",
-  "Plan a trip to Venice",
+  "Plan a trip to India",
 ];
 
 export default function FullAppScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
 
   const [activeTab, setActiveTab] = useState<'chat' | 'image'>('chat');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -155,7 +165,7 @@ export default function FullAppScreen() {
           setSettings(loadedSettings);
         }
       });
-    }, 5000); // Polling settings less frequently
+    }, 5000);
     return () => clearInterval(interval);
   }, [settings]);
 
@@ -442,7 +452,7 @@ export default function FullAppScreen() {
 
                 if (parsed?.usage) {
                   finalUsage = parsed.usage;
-                  tokenCountRef.current = finalUsage.total_tokens || finalUsage.completion_tokens || tokenCountRef.current;
+                  tokenCountRef.current = finalUsage?.total_tokens || finalUsage?.completion_tokens || tokenCountRef.current;
                 }
 
                 if (choice?.delta?.content) {
@@ -646,7 +656,8 @@ export default function FullAppScreen() {
         return (
           <View key={index} style={styles.codeBlock}>
             <View style={styles.codeHeader}>
-              <Text style={styles.codeHeaderText}>Code</Text>
+              <Text style={styles.codeHeaderText}>CODE</Text>
+              <View style={styles.codeHeaderDot} />
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               <Text style={styles.codeText}>{codeContent}</Text>
@@ -662,21 +673,32 @@ export default function FullAppScreen() {
     });
   };
 
+  // ===== RENDER COMPONENTS =====
+
   const renderHeader = () => (
-    <View style={styles.header}>
+    <View style={[styles.header, { paddingTop: insets.top }]}>
+      <View style={styles.headerLeft}>
+        <View style={styles.logoMark}>
+          <View style={styles.logoBar1} />
+          <View style={styles.logoBar2} />
+          <View style={styles.logoBar3} />
+        </View>
+        <Text style={styles.logoText}>vGPT</Text>
+      </View>
+
       <TouchableOpacity onPress={() => setShowModelPicker(true)} style={styles.modelSelector}>
         <Text style={styles.modelSelectorText} numberOfLines={1}>
           {getModelDisplayName(settings.model)}
         </Text>
-        <Feather name="chevron-down" size={14} color={COLORS.textSecondary} />
+        <Feather name="chevron-down" size={14} color={THEME.saffron} />
       </TouchableOpacity>
 
-      <View style={styles.headerActions}>
-        <TouchableOpacity onPress={handleClearChat} style={styles.iconButton}>
-          <Feather name="trash-2" size={20} color={COLORS.textPrimary} />
+      <View style={styles.headerRight}>
+        <TouchableOpacity onPress={handleClearChat} style={styles.iconBtn}>
+          <Feather name="trash-2" size={18} color={THEME.textSecondary} />
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.push('/settings')} style={styles.iconButton}>
-          <Feather name="settings" size={20} color={COLORS.textPrimary} />
+        <TouchableOpacity onPress={() => router.push('/settings')} style={styles.iconBtn}>
+          <Feather name="sliders" size={18} color={THEME.textSecondary} />
         </TouchableOpacity>
       </View>
     </View>
@@ -688,31 +710,42 @@ export default function FullAppScreen() {
         onPress={() => setActiveTab('chat')}
         style={[styles.tab, activeTab === 'chat' && styles.activeTab]}
       >
+        <Feather name="message-circle" size={16} color={activeTab === 'chat' ? THEME.saffron : THEME.textMuted} />
         <Text style={[styles.tabText, activeTab === 'chat' && styles.activeTabText]}>Chat</Text>
+        {activeTab === 'chat' && <View style={styles.tabIndicator} />}
       </TouchableOpacity>
       <TouchableOpacity
         onPress={() => setActiveTab('image')}
         style={[styles.tab, activeTab === 'image' && styles.activeTab]}
       >
-        <Text style={[styles.tabText, activeTab === 'image' && styles.activeTabText]}>Create</Text>
+        <Feather name="image" size={16} color={activeTab === 'image' ? THEME.green : THEME.textMuted} />
+        <Text style={[styles.tabText, activeTab === 'image' && styles.activeTabTextGreen]}>Create</Text>
+        {activeTab === 'image' && <View style={styles.tabIndicatorGreen} />}
       </TouchableOpacity>
     </View>
   );
 
-  const renderChatWelcome = () => (
+  const renderWelcome = () => (
     <View style={styles.welcomeContainer}>
-      <View style={styles.logoContainer}>
-        <Feather name="command" size={48} color={COLORS.textPrimary} />
+      <View style={styles.welcomeGlow} />
+      <View style={styles.welcomeIcon}>
+        <Feather name="zap" size={32} color={THEME.saffron} />
       </View>
-      <Text style={styles.welcomeTitle}>How can I help you today?</Text>
-      <View style={styles.suggestionsGrid}>
+      <Text style={styles.welcomeTitle}>What can I help you with?</Text>
+      <Text style={styles.welcomeSubtitle}>Ask anything or try a suggestion below</Text>
+
+      <View style={styles.suggestionsContainer}>
         {SUGGESTIONS.map((suggestion, index) => (
           <TouchableOpacity
             key={index}
             onPress={() => handleSuggestionPress(suggestion)}
-            style={styles.suggestionChip}
+            style={[
+              styles.suggestionChip,
+              index % 2 === 0 ? styles.suggestionChipSaffron : styles.suggestionChipNavy
+            ]}
           >
             <Text style={styles.suggestionText}>{suggestion}</Text>
+            <Feather name="arrow-up-right" size={14} color={THEME.textSecondary} />
           </TouchableOpacity>
         ))}
       </View>
@@ -724,19 +757,39 @@ export default function FullAppScreen() {
       ref={flatListRef}
       data={messages}
       renderItem={({ item }) => (
-        <View style={[styles.messageRow, item.role === 'user' ? styles.userRow : styles.assistantRow]}>
-          <View style={item.role === 'user' ? styles.userAvatar : styles.assistantAvatar}>
-            <Feather name={item.role === 'user' ? 'user' : 'cpu'} size={14} color="#fff" />
+        <View style={[styles.messageRow, item.role === 'assistant' && styles.assistantRow]}>
+          <View style={[styles.avatar, item.role === 'user' ? styles.userAvatar : styles.assistantAvatar]}>
+            <Feather
+              name={item.role === 'user' ? 'user' : 'cpu'}
+              size={14}
+              color={item.role === 'user' ? THEME.navy : THEME.saffron}
+            />
           </View>
           <View style={styles.messageContent}>
-            <Text style={styles.roleLabel}>{item.role === 'user' ? 'You' : 'vGPT'}</Text>
-            <View style={[styles.bubble, item.role === 'user' ? styles.userBubble : styles.assistantBubble]}>
-              {formatMessageContent(item.content)}
-            </View>
+            <Text style={styles.roleLabel}>
+              {item.role === 'user' ? 'You' : 'vGPT'}
+            </Text>
+            {formatMessageContent(item.content)}
             {item.metrics && item.role === 'assistant' && (
-              <Text style={styles.metricsText}>
-                {item.metrics.tokensPerSecond?.toFixed(1)} tok/s • {item.metrics.cost ? `$${item.metrics.cost.toFixed(4)}` : `${item.metrics.totalTokens} tokens`}
-              </Text>
+              <View style={styles.metricsRow}>
+                <View style={styles.metricBadge}>
+                  <Text style={styles.metricText}>
+                    {item.metrics.tokensPerSecond?.toFixed(1)} tok/s
+                  </Text>
+                </View>
+                <View style={styles.metricBadge}>
+                  <Text style={styles.metricText}>
+                    {item.metrics.totalTokens} tokens
+                  </Text>
+                </View>
+                {item.metrics.cost && (
+                  <View style={styles.metricBadge}>
+                    <Text style={styles.metricText}>
+                      ${item.metrics.cost.toFixed(4)}
+                    </Text>
+                  </View>
+                )}
+              </View>
             )}
           </View>
         </View>
@@ -745,17 +798,17 @@ export default function FullAppScreen() {
       contentContainerStyle={styles.listContent}
       onScroll={handleScroll}
       scrollEventThrottle={16}
-      ListEmptyComponent={renderChatWelcome()}
+      ListEmptyComponent={renderWelcome()}
     />
   );
 
   const renderComposer = () => (
-    <View style={[styles.composerContainer, { paddingBottom: insets.bottom + 16 }]}>
-      <View style={styles.composerInner}>
+    <View style={[styles.composerOuter, { paddingBottom: insets.bottom + 12 }]}>
+      <View style={styles.composerContainer}>
         <TextInput
           style={styles.input}
           placeholder="Message vGPT..."
-          placeholderTextColor={COLORS.textSecondary}
+          placeholderTextColor={THEME.textMuted}
           value={message}
           onChangeText={setMessage}
           multiline
@@ -764,12 +817,12 @@ export default function FullAppScreen() {
         <TouchableOpacity
           onPress={handleSend}
           disabled={isLoading || !message.trim()}
-          style={[styles.sendButton, (isLoading || !message.trim()) && { opacity: 0.3 }]}
+          style={[styles.sendBtn, (isLoading || !message.trim()) && styles.sendBtnDisabled]}
         >
           {isLoading ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={THEME.background} />
           ) : (
-            <Feather name="arrow-up" size={20} color="#fff" />
+            <Feather name="arrow-up" size={18} color={THEME.background} />
           )}
         </TouchableOpacity>
       </View>
@@ -781,8 +834,11 @@ export default function FullAppScreen() {
       <ScrollView contentContainerStyle={styles.imageScrollContent}>
         {generatedImages.length === 0 ? (
           <View style={styles.imageWelcome}>
-            <Text style={styles.welcomeTitle}>Create images</Text>
-            <Text style={styles.welcomeSubtitle}>Generate stunning visuals with AI</Text>
+            <View style={styles.imageWelcomeIcon}>
+              <Feather name="image" size={32} color={THEME.green} />
+            </View>
+            <Text style={styles.welcomeTitle}>Create with AI</Text>
+            <Text style={styles.welcomeSubtitle}>Generate stunning images from text</Text>
           </View>
         ) : (
           <View style={styles.imageGrid}>
@@ -793,9 +849,12 @@ export default function FullAppScreen() {
                   style={[styles.genImage, { aspectRatio: (img.width || 1024) / (img.height || 1024) }]}
                   contentFit="cover"
                 />
-                <TouchableOpacity onPress={() => downloadImage(img.imageData)} style={styles.imgDownloadBtn}>
-                  <Feather name="download" size={18} color="#fff" />
-                </TouchableOpacity>
+                <View style={styles.imageOverlay}>
+                  <Text style={styles.imagePromptText} numberOfLines={2}>{img.prompt}</Text>
+                  <TouchableOpacity onPress={() => downloadImage(img.imageData)} style={styles.downloadBtn}>
+                    <Feather name="download" size={16} color={THEME.white} />
+                  </TouchableOpacity>
+                </View>
               </View>
             ))}
           </View>
@@ -803,30 +862,77 @@ export default function FullAppScreen() {
       </ScrollView>
 
       {showImageSettings && (
-        <View style={styles.imageSettingsPanel}>
-          <Text style={styles.settingsPanelTitle}>Generation Settings</Text>
-          {/* Reuse slider logic here or simple buttons for size */}
-          <Text style={styles.settingLabel}>Steps: {settings.imageSteps}</Text>
+        <View style={styles.settingsPanel}>
+          <View style={styles.settingsPanelHeader}>
+            <Text style={styles.settingsPanelTitle}>Generation Settings</Text>
+            <TouchableOpacity onPress={() => setShowImageSettings(false)}>
+              <Feather name="x" size={18} color={THEME.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>Steps</Text>
+            <Text style={styles.settingValue}>{settings.imageSteps || 8}</Text>
+          </View>
           <Slider
-            value={settings.imageSteps}
+            value={settings.imageSteps || 8}
             minimumValue={1}
             maximumValue={8}
             step={1}
             onValueChange={(v) => updateSettings({ imageSteps: v })}
-            minimumTrackTintColor={COLORS.accent}
+            minimumTrackTintColor={THEME.green}
+            maximumTrackTintColor={THEME.borderLight}
+            thumbTintColor={THEME.green}
           />
+
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>Guidance</Text>
+            <Text style={styles.settingValue}>{(settings.imageGuidanceScale || 7.5).toFixed(1)}</Text>
+          </View>
+          <Slider
+            value={settings.imageGuidanceScale || 7.5}
+            minimumValue={1}
+            maximumValue={20}
+            step={0.5}
+            onValueChange={(v) => updateSettings({ imageGuidanceScale: v })}
+            minimumTrackTintColor={THEME.green}
+            maximumTrackTintColor={THEME.borderLight}
+            thumbTintColor={THEME.green}
+          />
+
+          <View style={styles.sizeSelector}>
+            {[
+              { label: 'Square', w: 1024, h: 1024 },
+              { label: 'Portrait', w: 576, h: 1024 },
+              { label: 'Landscape', w: 1024, h: 576 },
+            ].map((size) => (
+              <TouchableOpacity
+                key={size.label}
+                onPress={() => updateSettings({ imageWidth: size.w, imageHeight: size.h })}
+                style={[
+                  styles.sizeBtn,
+                  settings.imageWidth === size.w && settings.imageHeight === size.h && styles.sizeBtnActive
+                ]}
+              >
+                <Text style={[
+                  styles.sizeBtnText,
+                  settings.imageWidth === size.w && settings.imageHeight === size.h && styles.sizeBtnTextActive
+                ]}>{size.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
       )}
 
-      <View style={[styles.composerContainer, { paddingBottom: insets.bottom + 16 }]}>
-        <View style={styles.composerInner}>
+      <View style={[styles.composerOuter, { paddingBottom: insets.bottom + 12 }]}>
+        <View style={styles.composerContainer}>
           <TouchableOpacity onPress={() => setShowImageSettings(!showImageSettings)} style={styles.settingsToggle}>
-            <Feather name="sliders" size={18} color={COLORS.textSecondary} />
+            <Feather name="sliders" size={18} color={showImageSettings ? THEME.green : THEME.textMuted} />
           </TouchableOpacity>
           <TextInput
             style={styles.input}
             placeholder="Describe an image..."
-            placeholderTextColor={COLORS.textSecondary}
+            placeholderTextColor={THEME.textMuted}
             value={imagePrompt}
             onChangeText={setImagePrompt}
             multiline
@@ -835,12 +941,12 @@ export default function FullAppScreen() {
           <TouchableOpacity
             onPress={handleGenerateImage}
             disabled={isGeneratingImage || !imagePrompt.trim()}
-            style={[styles.sendButton, { backgroundColor: COLORS.accent }, (isGeneratingImage || !imagePrompt.trim()) && { opacity: 0.3 }]}
+            style={[styles.sendBtnGreen, (isGeneratingImage || !imagePrompt.trim()) && styles.sendBtnDisabled]}
           >
             {isGeneratingImage ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={THEME.background} />
             ) : (
-              <Feather name="zap" size={20} color="#fff" />
+              <Feather name="zap" size={18} color={THEME.background} />
             )}
           </TouchableOpacity>
         </View>
@@ -848,14 +954,56 @@ export default function FullAppScreen() {
     </View>
   );
 
+  const renderModelPicker = () => (
+    <Modal visible={showModelPicker} animationType="slide" presentationStyle="formSheet">
+      <View style={styles.modalContainer}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Select Model</Text>
+          <TouchableOpacity onPress={() => setShowModelPicker(false)} style={styles.modalClose}>
+            <Feather name="x" size={24} color={THEME.textPrimary} />
+          </TouchableOpacity>
+        </View>
+        <FlatList
+          data={activeTab === 'chat' ? textModels : imageModels}
+          renderItem={({ item }) => {
+            const isSelected = (activeTab === 'chat' ? settings.model : settings.imageModel) === item.id;
+            return (
+              <TouchableOpacity
+                onPress={() => activeTab === 'chat' ? handleChatModelSelect(item.id) : handleImageModelSelect(item.id)}
+                style={[styles.modelItem, isSelected && styles.modelItemSelected]}
+              >
+                <View style={styles.modelInfo}>
+                  <Text style={styles.modelName}>{item.model_spec.name || item.id}</Text>
+                  <Text style={styles.modelId}>{item.id}</Text>
+                </View>
+                {isSelected && (
+                  <View style={styles.checkMark}>
+                    <Feather name="check" size={16} color={THEME.saffron} />
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          }}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.modalList}
+        />
+      </View>
+    </Modal>
+  );
+
+  // ===== LOADING STATE =====
   if (isLoadingModels) {
     return (
-      <View style={styles.loadingScreen}>
-        <ActivityIndicator size="large" color={COLORS.accent} />
+      <View style={styles.loadingContainer}>
+        <View style={styles.loadingSpinner}>
+          <ActivityIndicator size="large" color={THEME.saffron} />
+        </View>
+        <Text style={styles.loadingText}>Initializing...</Text>
       </View>
     );
   }
 
+  // ===== MAIN RENDER =====
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="light" />
@@ -864,15 +1012,15 @@ export default function FullAppScreen() {
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={{ flex: 1 }}
+        style={styles.flex1}
       >
         {activeTab === 'chat' ? (
-          <View style={{ flex: 1 }}>
+          <View style={styles.flex1}>
             {renderMessages()}
             {renderComposer()}
             {showScrollToBottom && (
-              <TouchableOpacity onPress={scrollToBottom} style={styles.scrollBtn}>
-                <Feather name="arrow-down" size={20} color={COLORS.textPrimary} />
+              <TouchableOpacity onPress={scrollToBottom} style={styles.scrollToBottom}>
+                <Feather name="chevron-down" size={20} color={THEME.textPrimary} />
               </TouchableOpacity>
             )}
           </View>
@@ -881,281 +1029,426 @@ export default function FullAppScreen() {
         )}
       </KeyboardAvoidingView>
 
-      <Modal visible={showModelPicker} animationType="slide" presentationStyle="formSheet">
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Select Model</Text>
-            <TouchableOpacity onPress={() => setShowModelPicker(false)}>
-              <Feather name="x" size={24} color={COLORS.textPrimary} />
-            </TouchableOpacity>
-          </View>
-          <FlatList
-            data={activeTab === 'chat' ? textModels : imageModels}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                onPress={() => activeTab === 'chat' ? handleChatModelSelect(item.id) : handleImageModelSelect(item.id)}
-                style={[styles.modelItem, (activeTab === 'chat' ? settings.model : settings.imageModel) === item.id && styles.selectedModel]}
-              >
-                <Text style={styles.modelName}>{item.model_spec.name || item.id}</Text>
-                <Text style={styles.modelIdText}>{item.id}</Text>
-              </TouchableOpacity>
-            )}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.modalList}
-          />
-        </View>
-      </Modal>
+      {renderModelPicker()}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  flex1: { flex: 1 },
+
   container: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: THEME.background,
   },
-  loadingScreen: {
+
+  // Loading
+  loadingContainer: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: THEME.background,
     justifyContent: 'center',
     alignItems: 'center',
   },
+  loadingSpinner: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: THEME.surface,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  loadingText: {
+    color: THEME.textSecondary,
+    fontSize: 14,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+  },
+
+  // Header
   header: {
-    height: 60,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
+    paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: THEME.borderLight,
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  logoMark: {
+    width: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 2,
+  },
+  logoBar1: {
+    width: 16,
+    height: 3,
+    backgroundColor: THEME.saffron,
+    borderRadius: 1,
+  },
+  logoBar2: {
+    width: 16,
+    height: 3,
+    backgroundColor: THEME.white,
+    borderRadius: 1,
+  },
+  logoBar3: {
+    width: 16,
+    height: 3,
+    backgroundColor: THEME.green,
+    borderRadius: 1,
+  },
+  logoText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: THEME.textPrimary,
+    letterSpacing: -0.5,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  iconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   modelSelector: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surface,
+    backgroundColor: THEME.surface,
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderRadius: 8,
-    maxWidth: '60%',
+    borderWidth: 1,
+    borderColor: THEME.border,
+    maxWidth: 180,
+    gap: 6,
   },
   modelSelectorText: {
-    color: COLORS.textPrimary,
-    fontSize: 14,
-    fontWeight: '600',
-    marginRight: 6,
-  },
-  headerActions: {
-    flexDirection: 'row',
-  },
-  iconButton: {
-    padding: 8,
-    marginLeft: 8,
-  },
-  tabBar: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  activeTab: {
-    borderBottomWidth: 2,
-    borderBottomColor: COLORS.textPrimary,
-  },
-  tabText: {
-    color: COLORS.textSecondary,
-    fontSize: 14,
+    color: THEME.textPrimary,
+    fontSize: 13,
     fontWeight: '500',
   },
-  activeTabText: {
-    color: COLORS.textPrimary,
+
+  // Tab Bar
+  tabBar: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    gap: 8,
   },
+  tab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    gap: 8,
+    position: 'relative',
+  },
+  activeTab: {
+    backgroundColor: THEME.surface,
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: THEME.textMuted,
+  },
+  activeTabText: {
+    color: THEME.saffron,
+  },
+  activeTabTextGreen: {
+    color: THEME.green,
+  },
+  tabIndicator: {
+    position: 'absolute',
+    bottom: 4,
+    left: '50%',
+    marginLeft: -8,
+    width: 16,
+    height: 2,
+    backgroundColor: THEME.saffron,
+    borderRadius: 1,
+  },
+  tabIndicatorGreen: {
+    position: 'absolute',
+    bottom: 4,
+    left: '50%',
+    marginLeft: -8,
+    width: 16,
+    height: 2,
+    backgroundColor: THEME.green,
+    borderRadius: 1,
+  },
+
+  // Welcome
+  welcomeContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+  },
+  welcomeGlow: {
+    position: 'absolute',
+    width: 300,
+    height: 300,
+    borderRadius: 150,
+    backgroundColor: THEME.glowSaffron,
+    opacity: 0.5,
+  },
+  welcomeIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 16,
+    backgroundColor: THEME.surface,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: THEME.border,
+  },
+  welcomeTitle: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: THEME.textPrimary,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  welcomeSubtitle: {
+    fontSize: 15,
+    color: THEME.textSecondary,
+    marginBottom: 32,
+    textAlign: 'center',
+  },
+  suggestionsContainer: {
+    width: '100%',
+    maxWidth: 400,
+    gap: 10,
+  },
+  suggestionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  suggestionChipSaffron: {
+    backgroundColor: THEME.glowSaffron,
+    borderColor: THEME.border,
+  },
+  suggestionChipNavy: {
+    backgroundColor: THEME.glowNavy,
+    borderColor: 'rgba(0, 0, 128, 0.3)',
+  },
+  suggestionText: {
+    fontSize: 14,
+    color: THEME.textPrimary,
+    flex: 1,
+  },
+
+  // Messages
   listContent: {
-    paddingBottom: 100,
+    paddingBottom: 120,
   },
   messageRow: {
     flexDirection: 'row',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  userRow: {
-    backgroundColor: 'transparent',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    gap: 12,
   },
   assistantRow: {
-    backgroundColor: 'rgba(255,255,255,0.02)',
+    backgroundColor: THEME.surface,
+  },
+  avatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   userAvatar: {
-    width: 24,
-    height: 24,
-    borderRadius: 4,
-    backgroundColor: '#3b82f6',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 4,
+    backgroundColor: THEME.white,
   },
   assistantAvatar: {
-    width: 24,
-    height: 24,
-    borderRadius: 4,
-    backgroundColor: COLORS.accent,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 4,
+    backgroundColor: THEME.surfaceLight,
+    borderWidth: 1,
+    borderColor: THEME.border,
   },
   messageContent: {
     flex: 1,
-    marginLeft: 16,
   },
   roleLabel: {
-    color: COLORS.textPrimary,
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '600',
+    color: THEME.textSecondary,
     marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   messageText: {
-    color: COLORS.textPrimary,
-    fontSize: 16,
+    fontSize: 15,
     lineHeight: 24,
+    color: THEME.textPrimary,
   },
-  bubble: {
-    marginTop: 4,
-  },
-  metricsText: {
-    color: COLORS.textSecondary,
-    fontSize: 11,
+  metricsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
     marginTop: 12,
   },
+  metricBadge: {
+    backgroundColor: THEME.surfaceLight,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  metricText: {
+    fontSize: 11,
+    color: THEME.textMuted,
+    fontWeight: '500',
+  },
+
+  // Code Block
   codeBlock: {
-    backgroundColor: '#0d0d0d',
+    backgroundColor: '#0d0d12',
     borderRadius: 8,
     marginVertical: 12,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: THEME.borderLight,
   },
   codeHeader: {
-    backgroundColor: '#2d2d2d',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 12,
     paddingVertical: 8,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    backgroundColor: THEME.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: THEME.borderLight,
   },
   codeHeaderText: {
-    color: '#b4b4b4',
-    fontSize: 12,
-    fontWeight: '500',
+    fontSize: 10,
+    fontWeight: '600',
+    color: THEME.textMuted,
+    letterSpacing: 1,
+  },
+  codeHeaderDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: THEME.green,
   },
   codeText: {
-    color: '#fff',
+    color: THEME.textPrimary,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    padding: 16,
     fontSize: 13,
+    padding: 16,
   },
-  composerContainer: {
+
+  // Composer
+  composerOuter: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
     paddingHorizontal: 16,
-    backgroundColor: 'transparent',
+    paddingTop: 8,
+    backgroundColor: THEME.background,
   },
-  composerInner: {
+  composerContainer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    backgroundColor: COLORS.surface,
-    borderRadius: 24,
-    paddingHorizontal: 16,
+    backgroundColor: THEME.surface,
+    borderRadius: 16,
+    paddingHorizontal: 12,
     paddingVertical: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: THEME.borderLight,
+    gap: 8,
   },
   input: {
     flex: 1,
-    color: COLORS.textPrimary,
-    fontSize: 16,
-    maxHeight: 200,
-    paddingTop: 8,
-    paddingBottom: 8,
+    color: THEME.textPrimary,
+    fontSize: 15,
+    maxHeight: 120,
+    paddingVertical: 8,
   },
-  sendButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: COLORS.textPrimary,
+  sendBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: THEME.saffron,
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 8,
-    marginBottom: 4,
   },
-  welcomeContainer: {
-    flex: 1,
+  sendBtnGreen: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: THEME.green,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 40,
   },
-  logoContainer: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    borderWidth: 2,
-    borderColor: COLORS.border,
+  sendBtnDisabled: {
+    opacity: 0.3,
+  },
+  settingsToggle: {
+    width: 36,
+    height: 36,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 24,
   },
-  welcomeTitle: {
-    color: COLORS.textPrimary,
-    fontSize: 24,
-    fontWeight: '700',
-    marginBottom: 32,
-  },
-  suggestionsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 12,
-  },
-  suggestionChip: {
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
-  },
-  suggestionText: {
-    color: COLORS.textSecondary,
-    fontSize: 14,
-  },
-  scrollBtn: {
+
+  // Scroll to bottom
+  scrollToBottom: {
     position: 'absolute',
-    bottom: 120,
-    right: 20,
+    bottom: 100,
+    right: 16,
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: COLORS.surface,
+    backgroundColor: THEME.surface,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: THEME.borderLight,
     justifyContent: 'center',
     alignItems: 'center',
   },
+
+  // Image Tab
   imageTabContainer: {
     flex: 1,
   },
   imageScrollContent: {
     padding: 16,
-    paddingBottom: 100,
+    paddingBottom: 120,
   },
   imageWelcome: {
     alignItems: 'center',
-    marginTop: 60,
+    paddingTop: 60,
   },
-  welcomeSubtitle: {
-    color: COLORS.textSecondary,
-    fontSize: 16,
+  imageWelcomeIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 16,
+    backgroundColor: THEME.surface,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(19, 136, 8, 0.3)',
   },
   imageGrid: {
     gap: 16,
@@ -1163,76 +1456,165 @@ const styles = StyleSheet.create({
   imageCard: {
     borderRadius: 16,
     overflow: 'hidden',
-    backgroundColor: COLORS.surface,
+    backgroundColor: THEME.surface,
+    borderWidth: 1,
+    borderColor: THEME.borderLight,
   },
   genImage: {
     width: '100%',
   },
-  imgDownloadBtn: {
+  imageOverlay: {
     position: 'absolute',
-    bottom: 12,
-    right: 12,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    padding: 12,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+  },
+  imagePromptText: {
+    flex: 1,
+    color: THEME.textPrimary,
+    fontSize: 13,
+    marginRight: 12,
+  },
+  downloadBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.1)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  imageSettingsPanel: {
-    backgroundColor: COLORS.surface,
+
+  // Settings Panel
+  settingsPanel: {
+    backgroundColor: THEME.surface,
     margin: 16,
-    padding: 20,
+    padding: 16,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: THEME.borderLight,
   },
-  settingsPanelTitle: {
-    color: COLORS.textPrimary,
-    fontSize: 16,
-    fontWeight: '600',
+  settingsPanelHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 16,
   },
-  settingLabel: {
-    color: COLORS.textSecondary,
+  settingsPanelTitle: {
     fontSize: 14,
-    marginBottom: 8,
+    fontWeight: '600',
+    color: THEME.textPrimary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  settingsToggle: {
-    padding: 8,
-    marginRight: 4,
+  settingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     marginBottom: 4,
+    marginTop: 12,
   },
-  modalContent: {
+  settingLabel: {
+    fontSize: 13,
+    color: THEME.textSecondary,
+  },
+  settingValue: {
+    fontSize: 13,
+    color: THEME.green,
+    fontWeight: '600',
+  },
+  sizeSelector: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 16,
+  },
+  sizeBtn: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: THEME.surfaceLight,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  sizeBtnActive: {
+    borderColor: THEME.green,
+    backgroundColor: THEME.glowGreen,
+  },
+  sizeBtnText: {
+    fontSize: 12,
+    color: THEME.textSecondary,
+    fontWeight: '500',
+  },
+  sizeBtnTextActive: {
+    color: THEME.green,
+  },
+
+  // Modal
+  modalContainer: {
+    flex: 1,
+    backgroundColor: THEME.background,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: THEME.borderLight,
   },
   modalTitle: {
-    color: COLORS.textPrimary,
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: '600',
+    color: THEME.textPrimary,
+  },
+  modalClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   modalList: {
     padding: 16,
   },
   modelItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderRadius: 12,
+    marginBottom: 8,
+    backgroundColor: THEME.surface,
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
-  selectedModel: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
+  modelItemSelected: {
+    borderColor: THEME.saffron,
+    backgroundColor: THEME.glowSaffron,
   },
-  modelIdText: {
-    color: COLORS.textSecondary,
+  modelInfo: {
+    flex: 1,
+  },
+  modelName: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: THEME.textPrimary,
+    marginBottom: 4,
+  },
+  modelId: {
     fontSize: 12,
-    marginTop: 4,
+    color: THEME.textMuted,
+  },
+  checkMark: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: THEME.surface,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

@@ -22,7 +22,7 @@ app.use(express.static(DIST_DIR, {
 }));
 
 // Handle client-side routing - serve index.html for all unmatched routes
-app.get('*', (req, res) => {
+app.get('(.*)', (req, res) => {
     const indexPath = path.join(DIST_DIR, 'index.html');
     if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
