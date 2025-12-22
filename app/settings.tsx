@@ -26,9 +26,9 @@ import { VENICE_MODELS_ENDPOINT } from '@/constants/venice';
 // ═══════════════════════════════════════════════════════════════════════════
 
 const THEME = {
-  bleu: '#002395',
+  red: '#FF4757',
+  redLight: 'rgba(255, 71, 87, 0.15)',
   blanc: '#FFFFFF',
-  rouge: '#ED2939',
   orange: '#FF7F50',
   orangeLight: 'rgba(255, 127, 80, 0.15)',
   noir: '#0C0C0E',
@@ -39,8 +39,8 @@ const THEME = {
   textMuted: '#636366',
   textDim: '#48484A',
   border: 'rgba(255, 255, 255, 0.06)',
-  borderAccent: 'rgba(0, 35, 149, 0.4)',
-  glowBlue: 'rgba(0, 35, 149, 0.2)',
+  borderAccent: 'rgba(255, 71, 87, 0.3)',
+  glowRed: 'rgba(255, 71, 87, 0.15)',
 };
 
 const getConstraintNumber = (constraint: any): number | undefined => {
@@ -156,9 +156,9 @@ export default function SettingsScreen() {
         step={step}
         value={value}
         onValueChange={v => updateSettings({ [key]: v } as any)}
-        minimumTrackTintColor={THEME.bleu}
+        minimumTrackTintColor={THEME.red}
         maximumTrackTintColor={THEME.border}
-        thumbTintColor={THEME.bleu}
+        thumbTintColor={THEME.red}
       />
     </View>
   );
@@ -215,7 +215,7 @@ export default function SettingsScreen() {
               <Switch
                 value={settings.includeVeniceSystemPrompt}
                 onValueChange={v => updateSettings({ includeVeniceSystemPrompt: v })}
-                trackColor={{ false: THEME.border, true: THEME.bleu }}
+                trackColor={{ false: THEME.border, true: THEME.red }}
                 thumbColor={THEME.blanc}
               />
             </View>
@@ -225,7 +225,7 @@ export default function SettingsScreen() {
               <Switch
                 value={settings.webCitations}
                 onValueChange={v => updateSettings({ webCitations: v })}
-                trackColor={{ false: THEME.border, true: THEME.bleu }}
+                trackColor={{ false: THEME.border, true: THEME.red }}
                 thumbColor={THEME.blanc}
               />
             </View>
@@ -257,7 +257,7 @@ export default function SettingsScreen() {
               <Switch
                 value={settings.stripThinking}
                 onValueChange={v => updateSettings({ stripThinking: v })}
-                trackColor={{ false: THEME.border, true: THEME.bleu }}
+                trackColor={{ false: THEME.border, true: THEME.red }}
                 thumbColor={THEME.blanc}
               />
             </View>
@@ -270,7 +270,7 @@ export default function SettingsScreen() {
               <Switch
                 value={settings.disableThinking}
                 onValueChange={v => updateSettings({ disableThinking: v })}
-                trackColor={{ false: THEME.border, true: THEME.bleu }}
+                trackColor={{ false: THEME.border, true: THEME.red }}
                 thumbColor={THEME.blanc}
               />
             </View>
@@ -306,7 +306,7 @@ export default function SettingsScreen() {
                   </View>
                   {selected && (
                     <View style={styles.modelCheck}>
-                      <Feather name="check" size={16} color={THEME.bleu} />
+                      <Feather name="check" size={16} color={THEME.red} />
                     </View>
                   )}
                 </TouchableOpacity>
@@ -416,7 +416,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   segmentActive: {
-    backgroundColor: THEME.glowBlue,
+    backgroundColor: THEME.glowRed,
   },
   segmentText: {
     fontSize: 13,
@@ -424,7 +424,7 @@ const styles = StyleSheet.create({
     color: THEME.textMuted,
   },
   segmentTextActive: {
-    color: THEME.bleu,
+    color: THEME.red,
   },
 
   // Switch
@@ -463,7 +463,7 @@ const styles = StyleSheet.create({
   },
   sliderValue: {
     fontSize: 14,
-    color: THEME.bleu,
+    color: THEME.red,
     fontWeight: '600',
   },
   slider: {
@@ -510,8 +510,8 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   modelItemSelected: {
-    borderColor: THEME.bleu,
-    backgroundColor: THEME.glowBlue,
+    borderColor: THEME.red,
+    backgroundColor: THEME.glowRed,
   },
   modelInfo: {
     flex: 1,

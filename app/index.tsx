@@ -35,14 +35,14 @@ import {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const THEME = {
-  // French Flag subtle accents
-  bleu: '#002395',           // French blue - primary accent
-  blanc: '#FFFFFF',          // White
-  rouge: '#ED2939',          // French red - secondary accent (used sparingly)
-
-  // Warm orange as creative accent
-  orange: '#FF7F50',         // Coral orange - warm accent
+  // Primary accents - RED for chat, ORANGE for images
+  red: '#FF4757',            // Vibrant red - chat accent
+  redLight: 'rgba(255, 71, 87, 0.15)',
+  orange: '#FF7F50',         // Coral orange - image/create accent
   orangeLight: 'rgba(255, 127, 80, 0.15)',
+
+  // Neutral
+  blanc: '#FFFFFF',          // White
 
   // Dark sophisticated base
   noir: '#0C0C0E',           // Deep black
@@ -59,10 +59,10 @@ const THEME = {
   // Borders - ultra subtle
   border: 'rgba(255, 255, 255, 0.06)',
   borderLight: 'rgba(255, 255, 255, 0.03)',
-  borderAccent: 'rgba(0, 35, 149, 0.4)',
+  borderAccent: 'rgba(255, 71, 87, 0.3)',
 
   // Glows
-  glowBlue: 'rgba(0, 35, 149, 0.2)',
+  glowRed: 'rgba(255, 71, 87, 0.15)',
   glowOrange: 'rgba(255, 127, 80, 0.12)',
 };
 
@@ -454,9 +454,9 @@ export default function MainScreen() {
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 8) }]}>
         <View style={styles.headerLeft}>
           <View style={styles.logoWrapper}>
-            <View style={styles.logoBleu} />
+            <View style={styles.logoRed} />
             <View style={styles.logoBlanc} />
-            <View style={styles.logoRouge} />
+            <View style={styles.logoOrange} />
           </View>
           <Text style={styles.logoText}>vGPT</Text>
         </View>
@@ -465,7 +465,7 @@ export default function MainScreen() {
           <Text style={styles.modelBtnText} numberOfLines={1}>
             {getModelName(activeTab === 'chat' ? settings.model : settings.imageModel)}
           </Text>
-          <Feather name="chevron-down" size={14} color={THEME.bleu} />
+          <Feather name="chevron-down" size={14} color={THEME.red} />
         </TouchableOpacity>
 
         <View style={styles.headerRight}>
@@ -496,7 +496,7 @@ export default function MainScreen() {
             <Feather
               name={tab.icon as any}
               size={15}
-              color={activeTab === tab.key ? THEME.bleu : THEME.textMuted}
+              color={activeTab === tab.key ? (tab.key === 'chat' ? THEME.red : THEME.orange) : THEME.textMuted}
             />
             <Text style={[styles.tabLabel, activeTab === tab.key && styles.tabLabelActive]}>
               {tab.label}
@@ -521,7 +521,7 @@ export default function MainScreen() {
               ListEmptyComponent={
                 <View style={styles.empty}>
                   <View style={styles.emptyIcon}>
-                    <Feather name="message-circle" size={28} color={THEME.bleu} />
+                    <Feather name="message-circle" size={28} color={THEME.red} />
                   </View>
                   <Text style={styles.emptyTitle}>Start a conversation</Text>
                   <Text style={styles.emptySub}>Ask anything or try a suggestion</Text>
@@ -546,7 +546,7 @@ export default function MainScreen() {
                     <Feather
                       name={item.role === 'user' ? 'user' : 'cpu'}
                       size={12}
-                      color={item.role === 'user' ? THEME.noir : THEME.bleu}
+                      color={item.role === 'user' ? THEME.noir : THEME.red}
                     />
                   </View>
                   <View style={styles.msgBody}>
@@ -767,7 +767,7 @@ export default function MainScreen() {
                   </View>
                   {selected && (
                     <View style={styles.modelCheck}>
-                      <Feather name="check" size={16} color={THEME.bleu} />
+                      <Feather name="check" size={16} color={THEME.red} />
                     </View>
                   )}
                 </TouchableOpacity>
@@ -808,7 +808,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: THEME.bleu,
+    backgroundColor: THEME.red,
   },
   loadingText: {
     color: THEME.textMuted,
@@ -838,9 +838,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 2,
   },
-  logoBleu: { flex: 1, backgroundColor: THEME.bleu, borderRadius: 2 },
+  logoRed: { flex: 1, backgroundColor: THEME.red, borderRadius: 2 },
   logoBlanc: { flex: 1, backgroundColor: THEME.blanc, borderRadius: 2 },
-  logoRouge: { flex: 1, backgroundColor: THEME.rouge, borderRadius: 2 },
+  logoOrange: { flex: 1, backgroundColor: THEME.orange, borderRadius: 2 },
   logoText: {
     fontSize: 17,
     fontWeight: '700',
@@ -892,7 +892,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   tabActive: {
-    backgroundColor: THEME.glowBlue,
+    backgroundColor: THEME.glowRed,
   },
   tabLabel: {
     fontSize: 13,
@@ -900,7 +900,7 @@ const styles = StyleSheet.create({
     color: THEME.textMuted,
   },
   tabLabelActive: {
-    color: THEME.bleu,
+    color: THEME.red,
   },
 
   // Empty / Welcome
@@ -914,7 +914,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 14,
-    backgroundColor: THEME.glowBlue,
+    backgroundColor: THEME.glowRed,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
@@ -978,7 +978,7 @@ const styles = StyleSheet.create({
     backgroundColor: THEME.blanc,
   },
   avatarAi: {
-    backgroundColor: THEME.glowBlue,
+    backgroundColor: THEME.glowRed,
     borderWidth: 1,
     borderColor: THEME.borderAccent,
   },
@@ -1007,7 +1007,7 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: THEME.bleu,
+    backgroundColor: THEME.red,
   },
   typingDot1: { opacity: 0.3 },
   typingDot2: { opacity: 0.6 },
@@ -1077,7 +1077,7 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 9,
-    backgroundColor: THEME.bleu,
+    backgroundColor: THEME.red,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1246,8 +1246,8 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   modelItemSelected: {
-    borderColor: THEME.bleu,
-    backgroundColor: THEME.glowBlue,
+    borderColor: THEME.red,
+    backgroundColor: THEME.glowRed,
   },
   modelInfo: {
     flex: 1,
