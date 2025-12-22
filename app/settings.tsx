@@ -252,7 +252,7 @@ export default function SettingsScreen() {
             <View style={styles.switchRow}>
               <View>
                 <Text style={styles.switchLabel}>Strip Thinking</Text>
-                <Text style={styles.switchHint}>Hide model's reasoning process</Text>
+                <Text style={styles.switchHint}>Hide model’s reasoning process</Text>
               </View>
               <Switch
                 value={settings.stripThinking}

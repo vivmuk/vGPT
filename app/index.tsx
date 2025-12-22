@@ -12,9 +12,11 @@ import {
   ScrollView,
   ActivityIndicator,
   Text,
+  Share,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
+import * as FileSystem from 'expo-file-system';
 import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
@@ -71,6 +73,7 @@ interface Message {
   content: string;
   id: string;
   isStreaming?: boolean;
+  reasoning?: string;
   metrics?: {
     tokensPerSecond?: number;
     totalTokens?: number;
@@ -110,6 +113,48 @@ const resolveUsdPrice = (p: unknown): number | undefined => {
   return undefined;
 };
 
+const getConstraintNumber = (constraint: any): number | undefined => {
+  if (constraint == null) return undefined;
+  if (typeof constraint === 'number') return constraint;
+  if (typeof constraint.default === 'number') return constraint.default;
+  if (typeof constraint.max === 'number') return constraint.max;
+  return undefined;
+};
+
+const getModelMaxTokens = (model?: VeniceModel | null): number | undefined => {
+  if (!model) return undefined;
+  const c = model.model_spec?.constraints || {};
+  for (const key of ['max_output_tokens', 'maxOutputTokens', 'max_tokens', 'response_tokens']) {
+    const val = getConstraintNumber((c as any)[key]);
+    if (val && val > 0) return val;
+  }
+  return model.model_spec?.availableContextTokens;
+};
+
+const extractThinkingBlocks = (text: string): { reasoning: string; content: string } => {
+  if (!text) return { reasoning: '', content: '' };
+
+  const patterns: RegExp[] = [
+    /<think>([\s\S]*?)<\/think>/gi,
+    /<thinking>([\s\S]*?)<\/thinking>/gi,
+    /```(?:thinking|think)\s*\n([\s\S]*?)```/gi,
+  ];
+
+  const reasoningParts: string[] = [];
+  let content = text;
+
+  for (const pattern of patterns) {
+    content = content.replace(pattern, (_m, inner: string) => {
+      const cleaned = String(inner ?? '').trim();
+      if (cleaned) reasoningParts.push(cleaned);
+      return '';
+    });
+  }
+
+  content = content.replace(/\n{3,}/g, '\n\n').trim();
+  return { reasoning: reasoningParts.join('\n\n').trim(), content };
+};
+
 const SUGGESTIONS = [
   { icon: 'code', text: 'Write a React hook' },
   { icon: 'edit-3', text: 'Draft a professional email' },
@@ -134,6 +179,7 @@ export default function MainScreen() {
   const [loadingModels, setLoadingModels] = useState(true);
   const [images, setImages] = useState<GeneratedImage[]>([]);
   const [imageSettings, setImageSettings] = useState(false);
+  const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
 
   // Refs
   const listRef = useRef<FlatList>(null);
@@ -170,6 +216,14 @@ export default function MainScreen() {
     }
   };
 
+  const updateSettings = useCallback((updates: Partial<AppSettings>) => {
+    setSettings(prev => {
+      const next = { ...prev, ...updates };
+      persistSettings(next);
+      return next;
+    });
+  }, []);
+
   const textModels = useMemo(() =>
     models.filter(m => !isImageModel(m)), [models]);
 
@@ -181,26 +235,53 @@ export default function MainScreen() {
     if (textModels.length && !textModels.find(m => m.id === settings.model)) {
       updateSettings({ model: textModels[0].id });
     }
-  }, [textModels, settings.model]);
+  }, [textModels, settings.model, updateSettings]);
 
   useEffect(() => {
     if (imageModels.length && !imageModels.find(m => m.id === settings.imageModel)) {
       updateSettings({ imageModel: imageModels[0].id });
     }
-  }, [imageModels, settings.imageModel]);
-
-  const updateSettings = useCallback((updates: Partial<AppSettings>) => {
-    setSettings(prev => {
-      const next = { ...prev, ...updates };
-      persistSettings(next);
-      return next;
-    });
-  }, []);
+  }, [imageModels, settings.imageModel, updateSettings]);
 
   const getModelName = (id: string) => {
     const m = models.find(x => x.id === id);
     return m?.model_spec?.name || id.split('/').pop() || id;
   };
+
+  const toggleReasoning = useCallback((id: string) => {
+    setExpandedReasoning(prev => ({ ...prev, [id]: !prev[id] }));
+  }, []);
+
+  const downloadImage = useCallback(async (img: GeneratedImage) => {
+    try {
+      if (Platform.OS === 'web') {
+        if (typeof document === 'undefined') return;
+        const a = document.createElement('a');
+        a.href = img.imageData;
+        a.download = `vgpt-${img.id}.webp`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        return;
+      }
+
+      const match = img.imageData.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/);
+      if (!match) throw new Error('Unsupported image data.');
+
+      const mime = match[1] || 'image/webp';
+      const base64 = match[2] || '';
+      const ext = mime.split('/')[1] || 'webp';
+
+      const dir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+      if (!dir) throw new Error('File system unavailable.');
+
+      const fileUri = `${dir}vgpt-${img.id}.${ext}`;
+      await FileSystem.writeAsStringAsync(fileUri, base64, { encoding: FileSystem.EncodingType.Base64 });
+      await Share.share({ url: fileUri, title: 'vGPT Image', message: img.prompt });
+    } catch (e: any) {
+      Alert.alert('Download failed', e?.message || 'Unable to download image.');
+    }
+  }, []);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // STREAMING CHAT
@@ -218,7 +299,7 @@ export default function MainScreen() {
     setMessages(history);
 
     const assistantId = `${Date.now()}-ai`;
-    setMessages(prev => [...prev, { role: 'assistant', content: '', id: assistantId, isStreaming: true }]);
+    setMessages(prev => [...prev, { role: 'assistant', content: '', reasoning: '', id: assistantId, isStreaming: true }]);
 
     try {
       const controller = new AbortController();
@@ -229,9 +310,19 @@ export default function MainScreen() {
       const veniceParams: any = {
         include_venice_system_prompt: settings.includeVeniceSystemPrompt,
       };
+      if (settings.stripThinking) veniceParams.strip_thinking = true;
+      if (settings.disableThinking) veniceParams.disable_thinking = true;
       if (currentModel?.model_spec?.capabilities?.supportsWebSearch) {
         veniceParams.enable_web_search = settings.webSearch;
         veniceParams.enable_web_citations = settings.webCitations;
+      }
+
+      const modelMax = getModelMaxTokens(currentModel);
+      let maxCompletionTokens: number | undefined;
+      if (currentModel?.model_spec?.capabilities?.supportsReasoning) {
+        maxCompletionTokens = modelMax ?? settings.maxTokens;
+      } else {
+        maxCompletionTokens = modelMax ? Math.min(settings.maxTokens, modelMax) : settings.maxTokens;
       }
 
       const body = {
@@ -241,7 +332,7 @@ export default function MainScreen() {
         venice_parameters: veniceParams,
         temperature: settings.temperature,
         top_p: settings.topP,
-        max_completion_tokens: settings.maxTokens,
+        ...(maxCompletionTokens ? { max_completion_tokens: maxCompletionTokens } : {}),
       };
 
       startTimeRef.current = Date.now();
@@ -257,6 +348,7 @@ export default function MainScreen() {
       if (!response.ok) throw new Error(`API error: ${response.status}`);
 
       let content = '';
+      let reasoning = '';
       let usage: any = null;
 
       const contentType = response.headers.get('content-type') || '';
@@ -282,17 +374,33 @@ export default function MainScreen() {
               const parsed = JSON.parse(data);
               if (parsed.usage) usage = parsed.usage;
 
-              const delta = parsed?.choices?.[0]?.delta?.content;
-              if (delta) {
-                content += delta;
-                tokenRef.current += Math.ceil(delta.length / 4);
+              const deltaContent = parsed?.choices?.[0]?.delta?.content;
+              const deltaReasoning = parsed?.choices?.[0]?.delta?.reasoning;
 
+              if (deltaReasoning) reasoning += deltaReasoning;
+              if (deltaContent) {
+                content += deltaContent;
+                tokenRef.current += Math.ceil(deltaContent.length / 4);
+              }
+
+              const extracted = extractThinkingBlocks(content);
+              if (extracted.reasoning) {
+                reasoning = [reasoning, extracted.reasoning].filter(Boolean).join('\n\n');
+                content = extracted.content;
+              }
+
+              if (deltaContent || deltaReasoning) {
                 const elapsed = (Date.now() - startTimeRef.current) / 1000;
                 const tps = elapsed > 0 ? tokenRef.current / elapsed : 0;
 
                 setMessages(prev => prev.map(m =>
                   m.id === assistantId
-                    ? { ...m, content, metrics: { tokensPerSecond: Math.round(tps * 10) / 10, totalTokens: tokenRef.current } }
+                    ? {
+                        ...m,
+                        content,
+                        reasoning: reasoning || undefined,
+                        metrics: { tokensPerSecond: Math.round(tps * 10) / 10, totalTokens: tokenRef.current }
+                      }
                     : m
                 ));
               }
@@ -303,7 +411,14 @@ export default function MainScreen() {
       } else {
         const data = await response.json();
         content = data?.choices?.[0]?.message?.content || '';
+        reasoning = data?.choices?.[0]?.message?.reasoning || '';
         usage = data?.usage;
+      }
+
+      const extracted = extractThinkingBlocks(content);
+      if (extracted.reasoning) {
+        reasoning = [reasoning, extracted.reasoning].filter(Boolean).join('\n\n');
+        content = extracted.content;
       }
 
       // Final metrics
@@ -325,6 +440,7 @@ export default function MainScreen() {
           ? {
               ...m,
               content: content || 'No response received.',
+              reasoning: reasoning || undefined,
               isStreaming: false,
               metrics: {
                 tokensPerSecond: Math.round(tps * 10) / 10,
@@ -431,23 +547,12 @@ export default function MainScreen() {
   // LOADING STATE
   // ═══════════════════════════════════════════════════════════════════════════
 
-  if (loadingModels) {
-    return (
-      <View style={styles.loadingScreen}>
-        <View style={styles.loadingPulse}>
-          <View style={styles.loadingDot} />
-        </View>
-        <Text style={styles.loadingText}>Initializing</Text>
-      </View>
-    );
-  }
-
   // ═══════════════════════════════════════════════════════════════════════════
   // MAIN RENDER
   // ═══════════════════════════════════════════════════════════════════════════
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar style="light" />
 
       {/* Header */}
@@ -465,7 +570,11 @@ export default function MainScreen() {
           <Text style={styles.modelBtnText} numberOfLines={1}>
             {getModelName(activeTab === 'chat' ? settings.model : settings.imageModel)}
           </Text>
-          <Feather name="chevron-down" size={14} color={THEME.red} />
+          {loadingModels ? (
+            <ActivityIndicator size="small" color={THEME.red} />
+          ) : (
+            <Feather name="chevron-down" size={14} color={THEME.red} />
+          )}
         </TouchableOpacity>
 
         <View style={styles.headerRight}>
@@ -516,6 +625,7 @@ export default function MainScreen() {
               ref={listRef}
               data={messages}
               keyExtractor={m => m.id}
+              style={styles.flex}
               contentContainerStyle={[styles.msgList, messages.length === 0 && styles.msgListEmpty]}
               onContentSizeChange={() => listRef.current?.scrollToEnd()}
               ListEmptyComponent={
@@ -559,6 +669,23 @@ export default function MainScreen() {
                       </View>
                     ) : (
                       renderCode(item.content)
+                    )}
+                    {!settings.stripThinking && item.role === 'assistant' && item.reasoning?.trim() && (
+                      <View style={styles.reasoning}>
+                        <TouchableOpacity style={styles.reasoningHeader} onPress={() => toggleReasoning(item.id)}>
+                          <Feather
+                            name={expandedReasoning[item.id] ? 'chevron-down' : 'chevron-right'}
+                            size={14}
+                            color={THEME.textSecondary}
+                          />
+                          <Text style={styles.reasoningTitle}>Reasoning</Text>
+                        </TouchableOpacity>
+                        {expandedReasoning[item.id] && (
+                          <View style={styles.reasoningBody}>
+                            {renderCode(item.reasoning)}
+                          </View>
+                        )}
+                      </View>
                     )}
                     {item.metrics && !item.isStreaming && (
                       <View style={styles.metrics}>
@@ -608,7 +735,7 @@ export default function MainScreen() {
         ) : (
           /* CREATE TAB */
           <View style={styles.flex}>
-            <ScrollView contentContainerStyle={styles.createContent}>
+            <ScrollView style={styles.flex} contentContainerStyle={styles.createContent}>
               {images.length === 0 ? (
                 <View style={styles.createEmpty}>
                   <View style={styles.createEmptyIcon}>
@@ -627,77 +754,86 @@ export default function MainScreen() {
                         contentFit="cover"
                       />
                       <View style={styles.imageOverlay}>
-                        <Text style={styles.imagePrompt} numberOfLines={2}>{img.prompt}</Text>
+                        <View style={styles.imageOverlayRow}>
+                          <Text style={styles.imagePrompt} numberOfLines={2}>{img.prompt}</Text>
+                          <TouchableOpacity
+                            onPress={() => downloadImage(img)}
+                            style={styles.imageActionBtn}
+                            accessibilityLabel="Download image"
+                          >
+                            <Feather name="download" size={16} color={THEME.blanc} />
+                          </TouchableOpacity>
+                        </View>
                       </View>
                     </View>
                   ))}
                 </View>
               )}
-            </ScrollView>
 
-            {/* Image Settings */}
-            {imageSettings && (
-              <View style={styles.imgSettings}>
-                <View style={styles.imgSettingsHeader}>
-                  <Text style={styles.imgSettingsTitle}>Settings</Text>
-                  <TouchableOpacity onPress={() => setImageSettings(false)}>
-                    <Feather name="x" size={18} color={THEME.textSecondary} />
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.settingRow}>
-                  <Text style={styles.settingLabel}>Steps</Text>
-                  <Text style={styles.settingValue}>{settings.imageSteps || 8}</Text>
-                </View>
-                <Slider
-                  value={settings.imageSteps || 8}
-                  minimumValue={1}
-                  maximumValue={8}
-                  step={1}
-                  onValueChange={v => updateSettings({ imageSteps: v })}
-                  minimumTrackTintColor={THEME.orange}
-                  maximumTrackTintColor={THEME.border}
-                  thumbTintColor={THEME.orange}
-                />
-
-                <View style={styles.settingRow}>
-                  <Text style={styles.settingLabel}>Guidance</Text>
-                  <Text style={styles.settingValue}>{(settings.imageGuidanceScale || 7.5).toFixed(1)}</Text>
-                </View>
-                <Slider
-                  value={settings.imageGuidanceScale || 7.5}
-                  minimumValue={1}
-                  maximumValue={20}
-                  step={0.5}
-                  onValueChange={v => updateSettings({ imageGuidanceScale: v })}
-                  minimumTrackTintColor={THEME.orange}
-                  maximumTrackTintColor={THEME.border}
-                  thumbTintColor={THEME.orange}
-                />
-
-                <View style={styles.sizes}>
-                  {[
-                    { label: '1:1', w: 1024, h: 1024 },
-                    { label: '9:16', w: 576, h: 1024 },
-                    { label: '16:9', w: 1024, h: 576 },
-                  ].map(s => (
-                    <TouchableOpacity
-                      key={s.label}
-                      onPress={() => updateSettings({ imageWidth: s.w, imageHeight: s.h })}
-                      style={[
-                        styles.sizeBtn,
-                        settings.imageWidth === s.w && settings.imageHeight === s.h && styles.sizeBtnActive
-                      ]}
-                    >
-                      <Text style={[
-                        styles.sizeBtnText,
-                        settings.imageWidth === s.w && settings.imageHeight === s.h && styles.sizeBtnTextActive
-                      ]}>{s.label}</Text>
+              {/* Image Settings */}
+              {imageSettings && (
+                <View style={styles.imgSettings}>
+                  <View style={styles.imgSettingsHeader}>
+                    <Text style={styles.imgSettingsTitle}>Settings</Text>
+                    <TouchableOpacity onPress={() => setImageSettings(false)}>
+                      <Feather name="x" size={18} color={THEME.textSecondary} />
                     </TouchableOpacity>
-                  ))}
+                  </View>
+
+                  <View style={styles.settingRow}>
+                    <Text style={styles.settingLabel}>Steps</Text>
+                    <Text style={styles.settingValue}>{settings.imageSteps || 8}</Text>
+                  </View>
+                  <Slider
+                    value={settings.imageSteps || 8}
+                    minimumValue={1}
+                    maximumValue={8}
+                    step={1}
+                    onValueChange={v => updateSettings({ imageSteps: v })}
+                    minimumTrackTintColor={THEME.orange}
+                    maximumTrackTintColor={THEME.border}
+                    thumbTintColor={THEME.orange}
+                  />
+
+                  <View style={styles.settingRow}>
+                    <Text style={styles.settingLabel}>Guidance</Text>
+                    <Text style={styles.settingValue}>{(settings.imageGuidanceScale || 7.5).toFixed(1)}</Text>
+                  </View>
+                  <Slider
+                    value={settings.imageGuidanceScale || 7.5}
+                    minimumValue={1}
+                    maximumValue={20}
+                    step={0.5}
+                    onValueChange={v => updateSettings({ imageGuidanceScale: v })}
+                    minimumTrackTintColor={THEME.orange}
+                    maximumTrackTintColor={THEME.border}
+                    thumbTintColor={THEME.orange}
+                  />
+
+                  <View style={styles.sizes}>
+                    {[
+                      { label: '1:1', w: 1024, h: 1024 },
+                      { label: '9:16', w: 576, h: 1024 },
+                      { label: '16:9', w: 1024, h: 576 },
+                    ].map(s => (
+                      <TouchableOpacity
+                        key={s.label}
+                        onPress={() => updateSettings({ imageWidth: s.w, imageHeight: s.h })}
+                        style={[
+                          styles.sizeBtn,
+                          settings.imageWidth === s.w && settings.imageHeight === s.h && styles.sizeBtnActive
+                        ]}
+                      >
+                        <Text style={[
+                          styles.sizeBtnText,
+                          settings.imageWidth === s.w && settings.imageHeight === s.h && styles.sizeBtnTextActive
+                        ]}>{s.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                 </View>
-              </View>
-            )}
+              )}
+            </ScrollView>
 
             {/* Image Composer */}
             <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
@@ -953,7 +1089,7 @@ const styles = StyleSheet.create({
 
   // Messages
   msgList: {
-    paddingBottom: 100,
+    paddingVertical: 8,
   },
   msgListEmpty: {
     flex: 1,
@@ -1042,13 +1178,35 @@ const styles = StyleSheet.create({
     color: THEME.text,
     lineHeight: 20,
   },
+  reasoning: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  reasoningHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: THEME.surfaceHover,
+  },
+  reasoningTitle: {
+    fontSize: 12,
+    color: THEME.textSecondary,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  reasoningBody: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: THEME.surface,
+  },
 
   // Composer
   composer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
     paddingHorizontal: 16,
     paddingTop: 8,
     backgroundColor: THEME.noir,
@@ -1102,7 +1260,7 @@ const styles = StyleSheet.create({
   // Create Tab
   createContent: {
     padding: 16,
-    paddingBottom: 120,
+    paddingBottom: 16,
   },
   createEmpty: {
     alignItems: 'center',
@@ -1138,9 +1296,23 @@ const styles = StyleSheet.create({
     padding: 12,
     backgroundColor: 'rgba(0,0,0,0.7)',
   },
+  imageOverlayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
   imagePrompt: {
+    flex: 1,
     color: THEME.text,
     fontSize: 13,
+  },
+  imageActionBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 
   // Image Settings
