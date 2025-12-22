@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(cat:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nFix Railway deployment: downgrade Express 5 to 4.x\n\n- Downgrade express from 5.2.1 to 4.21.2 \\(stable version\\)\n- Add better error handling and startup logging to server.js\n- Express 5 has breaking changes that may cause issues in Railway\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push)",
+      "Bash(dir /b /s:*)",
+      "Bash(git commit:*)"
     ]
   }
 }

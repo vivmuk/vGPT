@@ -19,7 +19,7 @@ import { DEFAULT_SETTINGS } from '@/constants/settings';
 import { AppSettings } from '@/types/settings';
 import { VeniceModel } from '@/types/venice';
 import { loadStoredSettings, persistSettings } from '@/utils/settingsStorage';
-import { VENICE_API_KEY, VENICE_MODELS_ENDPOINT } from '@/constants/venice';
+import { VENICE_MODELS_ENDPOINT } from '@/constants/venice';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // FRENCH DESIGNER THEME - Matching index.tsx
@@ -74,9 +74,7 @@ export default function SettingsScreen() {
 
   const loadModels = async () => {
     try {
-      const res = await fetch(VENICE_MODELS_ENDPOINT, {
-        headers: { Authorization: `Bearer ${VENICE_API_KEY}` },
-      });
+      const res = await fetch(VENICE_MODELS_ENDPOINT);
       const data = await res.json();
       setModels(Array.isArray(data?.data) ? data.data : []);
     } catch (e) {

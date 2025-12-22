@@ -24,7 +24,6 @@ import { AppSettings } from '@/types/settings';
 import { VeniceModel } from '@/types/venice';
 import { loadStoredSettings, persistSettings } from '@/utils/settingsStorage';
 import {
-  VENICE_API_KEY,
   VENICE_CHAT_COMPLETIONS_ENDPOINT,
   VENICE_MODELS_ENDPOINT,
   VENICE_IMAGE_GENERATIONS_ENDPOINT,
@@ -153,12 +152,8 @@ export default function MainScreen() {
     setLoadingModels(true);
     try {
       const [textRes, imgRes] = await Promise.all([
-        fetch(VENICE_MODELS_ENDPOINT, {
-          headers: { Authorization: `Bearer ${VENICE_API_KEY}` },
-        }),
-        fetch(`${VENICE_MODELS_ENDPOINT}?type=image`, {
-          headers: { Authorization: `Bearer ${VENICE_API_KEY}` },
-        }),
+        fetch(VENICE_MODELS_ENDPOINT),
+        fetch(`${VENICE_MODELS_ENDPOINT}?type=image`),
       ]);
 
       const textData = await textRes.json();
@@ -254,10 +249,7 @@ export default function MainScreen() {
 
       const response = await fetch(VENICE_CHAT_COMPLETIONS_ENDPOINT, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${VENICE_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
         signal: controller.signal,
       });
@@ -386,10 +378,7 @@ export default function MainScreen() {
 
       const res = await fetch(VENICE_IMAGE_GENERATIONS_ENDPOINT, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${VENICE_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
