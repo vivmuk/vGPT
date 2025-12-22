@@ -11,9 +11,6 @@ import {
   FlatList,
   ScrollView,
   ActivityIndicator,
-  LayoutAnimation,
-  UIManager,
-  Share,
   Text,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -33,14 +30,48 @@ import {
   VENICE_IMAGE_GENERATIONS_ENDPOINT,
 } from '@/constants/venice';
 
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
+// ═══════════════════════════════════════════════════════════════════════════
+// FRENCH DESIGNER THEME - Subtle, Elegant, Futuristic
+// Inspired by French minimalism with tricolore accents
+// ═══════════════════════════════════════════════════════════════════════════
+
+const THEME = {
+  // French Flag subtle accents
+  bleu: '#002395',           // French blue - primary accent
+  blanc: '#FFFFFF',          // White
+  rouge: '#ED2939',          // French red - secondary accent (used sparingly)
+
+  // Warm orange as creative accent
+  orange: '#FF7F50',         // Coral orange - warm accent
+  orangeLight: 'rgba(255, 127, 80, 0.15)',
+
+  // Dark sophisticated base
+  noir: '#0C0C0E',           // Deep black
+  surface: '#141416',        // Card surface
+  surfaceHover: '#1C1C1F',   // Elevated surface
+  surfaceActive: '#232326',  // Active states
+
+  // Text with excellent contrast
+  text: '#FAFAFA',           // Primary text
+  textSecondary: '#A1A1A6',  // Secondary text
+  textMuted: '#636366',      // Muted text
+  textDim: '#48484A',        // Barely visible
+
+  // Borders - ultra subtle
+  border: 'rgba(255, 255, 255, 0.06)',
+  borderLight: 'rgba(255, 255, 255, 0.03)',
+  borderAccent: 'rgba(0, 35, 149, 0.4)',
+
+  // Glows
+  glowBlue: 'rgba(0, 35, 149, 0.2)',
+  glowOrange: 'rgba(255, 127, 80, 0.12)',
+};
 
 interface Message {
   role: 'user' | 'assistant';
   content: string;
   id: string;
+  isStreaming?: boolean;
   metrics?: {
     tokensPerSecond?: number;
     totalTokens?: number;
@@ -61,331 +92,165 @@ interface GeneratedImage {
   height?: number;
 }
 
-// Futuristic Indian Flag Color Palette
-const THEME = {
-  // Core colors from Indian flag
-  saffron: '#FF6B35',      // Vibrant saffron (courage & sacrifice)
-  white: '#FFFFFF',        // Pure white (peace & truth)
-  navy: '#000080',         // Navy blue (Ashoka Chakra)
-  green: '#138808',        // India green (fertility & growth)
-
-  // Dark futuristic base
-  background: '#0a0a0f',   // Deep space black
-  surface: '#12121a',      // Elevated surface
-  surfaceLight: '#1a1a24', // Lighter surface
-
-  // Text hierarchy
-  textPrimary: '#FFFFFF',
-  textSecondary: 'rgba(255, 255, 255, 0.7)',
-  textMuted: 'rgba(255, 255, 255, 0.4)',
-
-  // Borders & accents
-  border: 'rgba(255, 107, 53, 0.2)',        // Saffron border
-  borderLight: 'rgba(255, 255, 255, 0.08)',
-
-  // Gradients (for glows)
-  glowSaffron: 'rgba(255, 107, 53, 0.15)',
-  glowNavy: 'rgba(0, 0, 128, 0.2)',
-  glowGreen: 'rgba(19, 136, 8, 0.15)',
-};
-
 const isImageModel = (model?: VeniceModel | null): boolean => {
   if (!model) return false;
   const modelType = model.type?.toLowerCase() ?? '';
-  if (modelType === 'image' || modelType.includes('image') || modelType.includes('diffusion')) {
-    return true;
-  }
+  if (modelType === 'image') return true;
   const capabilities = model.model_spec?.capabilities || {};
-  if (capabilities.supportsImageGeneration === true || capabilities.image === true) {
-    return true;
-  }
+  if (capabilities.supportsImageGeneration === true) return true;
   const modelId = model.id.toLowerCase();
-  const imageKeywords = ['image', 'flux', 'sd', 'stable-diffusion', 'dalle', 'midjourney', 'imagen'];
-  return imageKeywords.some(keyword => modelId.includes(keyword));
+  return ['flux', 'stable-diffusion', 'imagen', 'dall'].some(k => modelId.includes(k));
 };
 
-const resolveUsdPrice = (pricingSection: unknown): number | undefined => {
-  if (pricingSection == null) return undefined;
-  if (typeof pricingSection === 'number') return pricingSection;
-  if (typeof pricingSection === 'object' && 'usd' in (pricingSection as Record<string, unknown>)) {
-    const value = (pricingSection as Record<string, unknown>).usd;
-    return typeof value === 'number' ? value : undefined;
+const resolveUsdPrice = (p: unknown): number | undefined => {
+  if (typeof p === 'number') return p;
+  if (p && typeof p === 'object' && 'usd' in p) {
+    const val = (p as any).usd;
+    return typeof val === 'number' ? val : undefined;
   }
   return undefined;
 };
 
 const SUGGESTIONS = [
-  "Explain quantum computing",
-  "Write a futuristic haiku",
-  "Debug this React code",
-  "Plan a trip to India",
+  { icon: 'code', text: 'Write a React hook' },
+  { icon: 'edit-3', text: 'Draft a professional email' },
+  { icon: 'cpu', text: 'Explain machine learning' },
+  { icon: 'globe', text: 'Plan a trip to Paris' },
 ];
 
-export default function FullAppScreen() {
+export default function MainScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  const [activeTab, setActiveTab] = useState<'chat' | 'image'>('chat');
+  // State
+  const [activeTab, setActiveTab] = useState<'chat' | 'create'>('chat');
   const [messages, setMessages] = useState<Message[]>([]);
-  const [message, setMessage] = useState('');
+  const [input, setInput] = useState('');
   const [imagePrompt, setImagePrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [models, setModels] = useState<VeniceModel[]>([]);
-  const [showModelPicker, setShowModelPicker] = useState(false);
-  const [isLoadingModels, setIsLoadingModels] = useState(false);
-  const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
-  const [imageError, setImageError] = useState<string | null>(null);
-  const [showImageSettings, setShowImageSettings] = useState(false);
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [showModels, setShowModels] = useState(false);
+  const [loadingModels, setLoadingModels] = useState(true);
+  const [images, setImages] = useState<GeneratedImage[]>([]);
+  const [imageSettings, setImageSettings] = useState(false);
 
-  const flatListRef = useRef<FlatList>(null);
-  const activeRequestControllerRef = useRef<AbortController | null>(null);
-  const responseStartTimeRef = useRef<number>(0);
-  const tokenCountRef = useRef<number>(0);
+  // Refs
+  const listRef = useRef<FlatList>(null);
+  const controllerRef = useRef<AbortController | null>(null);
+  const startTimeRef = useRef<number>(0);
+  const tokenRef = useRef<number>(0);
 
+  // Load settings and models
   useEffect(() => {
-    loadStoredSettings<AppSettings>(DEFAULT_SETTINGS).then((loadedSettings) => {
-      if (loadedSettings.imageGuidanceScale !== undefined) {
-        loadedSettings.imageGuidanceScale = Math.max(1, Math.min(20, loadedSettings.imageGuidanceScale));
-      }
-      setSettings(loadedSettings);
-    });
+    loadStoredSettings<AppSettings>(DEFAULT_SETTINGS).then(setSettings);
     loadModels();
+    return () => controllerRef.current?.abort();
   }, []);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      loadStoredSettings<AppSettings>(DEFAULT_SETTINGS).then((loadedSettings) => {
-        if (JSON.stringify(loadedSettings) !== JSON.stringify(settings)) {
-          if (loadedSettings.imageGuidanceScale !== undefined) {
-            loadedSettings.imageGuidanceScale = Math.max(1, Math.min(20, loadedSettings.imageGuidanceScale));
-          }
-          setSettings(loadedSettings);
-        }
-      });
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [settings]);
+  const loadModels = async () => {
+    setLoadingModels(true);
+    try {
+      const [textRes, imgRes] = await Promise.all([
+        fetch(VENICE_MODELS_ENDPOINT, {
+          headers: { Authorization: `Bearer ${VENICE_API_KEY}` },
+        }),
+        fetch(`${VENICE_MODELS_ENDPOINT}?type=image`, {
+          headers: { Authorization: `Bearer ${VENICE_API_KEY}` },
+        }),
+      ]);
 
-  useEffect(() => {
-    return () => {
-      activeRequestControllerRef.current?.abort();
-    };
-  }, []);
+      const textData = await textRes.json();
+      const imgData = await imgRes.json();
+
+      const textModels = Array.isArray(textData?.data) ? textData.data : [];
+      const imgModels = Array.isArray(imgData?.data) ? imgData.data : [];
+
+      setModels([...textModels, ...imgModels]);
+    } catch (e) {
+      console.error('Failed to load models:', e);
+    } finally {
+      setLoadingModels(false);
+    }
+  };
 
   const textModels = useMemo(() =>
-    models.filter((model: VeniceModel) => {
-      const modelType = model.type?.toLowerCase() ?? '';
-      return modelType !== 'image' && !isImageModel(model);
-    }),
-    [models]
-  );
+    models.filter(m => !isImageModel(m)), [models]);
 
-  const imageModels = useMemo(() => {
-    return models.filter((model: VeniceModel) => isImageModel(model));
-  }, [models]);
+  const imageModels = useMemo(() =>
+    models.filter(m => isImageModel(m)), [models]);
 
-  const updateSettings = useCallback((newSettings: Partial<AppSettings>) => {
-    setSettings((prev: AppSettings) => {
-      const updated = { ...prev, ...newSettings };
-      if (updated.imageGuidanceScale !== undefined) {
-        updated.imageGuidanceScale = Math.max(1, Math.min(20, updated.imageGuidanceScale));
-      }
-      void persistSettings(updated);
-      return updated;
+  // Auto-select models
+  useEffect(() => {
+    if (textModels.length && !textModels.find(m => m.id === settings.model)) {
+      updateSettings({ model: textModels[0].id });
+    }
+  }, [textModels, settings.model]);
+
+  useEffect(() => {
+    if (imageModels.length && !imageModels.find(m => m.id === settings.imageModel)) {
+      updateSettings({ imageModel: imageModels[0].id });
+    }
+  }, [imageModels, settings.imageModel]);
+
+  const updateSettings = useCallback((updates: Partial<AppSettings>) => {
+    setSettings(prev => {
+      const next = { ...prev, ...updates };
+      persistSettings(next);
+      return next;
     });
   }, []);
 
-  const loadModels = useCallback(async () => {
-    setIsLoadingModels(true);
-    try {
-      const textResponse = await fetch(VENICE_MODELS_ENDPOINT, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${VENICE_API_KEY}` },
-      });
-
-      if (!textResponse.ok) throw new Error(`Venice API error: ${textResponse.status}`);
-
-      const textData = await textResponse.json();
-      const textModelsList: VeniceModel[] = Array.isArray(textData?.data)
-        ? textData.data
-        : Array.isArray(textData?.models)
-          ? textData.models
-          : [];
-
-      const imageResponse = await fetch(`${VENICE_MODELS_ENDPOINT}?type=image`, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${VENICE_API_KEY}` },
-      });
-
-      let imageModelsList: VeniceModel[] = [];
-      if (imageResponse.ok) {
-        const imageData = await imageResponse.json();
-        imageModelsList = Array.isArray(imageData?.data)
-          ? imageData.data
-          : Array.isArray(imageData?.models)
-            ? imageData.models
-            : [];
-      }
-
-      const allModels = [...textModelsList, ...imageModelsList];
-      setModels(allModels);
-    } catch (error) {
-      console.error('Failed to load models:', error);
-    } finally {
-      setIsLoadingModels(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (textModels.length === 0) return;
-    if (!settings.model || !textModels.some((model) => model.id === settings.model)) {
-      updateSettings({ model: textModels[0].id });
-    }
-  }, [textModels, settings.model, updateSettings]);
-
-  useEffect(() => {
-    if (imageModels.length === 0) return;
-    if (!settings.imageModel || !imageModels.some((model) => model.id === settings.imageModel)) {
-      updateSettings({ imageModel: imageModels[0].id });
-    }
-  }, [imageModels, settings.imageModel, updateSettings]);
-
-  const getModelDisplayName = useCallback((modelId: string) => {
-    const model = models.find((m) => m.id === modelId);
-    return model?.model_spec.name || modelId;
-  }, [models]);
-
-  const handleChatModelSelect = useCallback((modelId: string) => {
-    updateSettings({ model: modelId });
-    setShowModelPicker(false);
-  }, [updateSettings]);
-
-  const handleImageModelSelect = useCallback((modelId: string) => {
-    updateSettings({ imageModel: modelId });
-    setShowModelPicker(false);
-  }, [updateSettings]);
-
-  const scrollToBottom = () => {
-    flatListRef.current?.scrollToEnd({ animated: true });
-    setShowScrollToBottom(false);
+  const getModelName = (id: string) => {
+    const m = models.find(x => x.id === id);
+    return m?.model_spec?.name || id.split('/').pop() || id;
   };
 
-  const handleScroll = (event: any) => {
-    const offsetY = event.nativeEvent.contentOffset.y;
-    const contentHeight = event.nativeEvent.contentSize.height;
-    const layoutHeight = event.nativeEvent.layoutMeasurement.height;
-
-    if (contentHeight - layoutHeight - offsetY > 100) {
-      setShowScrollToBottom(true);
-    } else {
-      setShowScrollToBottom(false);
-    }
-  };
-
-  const handleClearChat = () => {
-    Alert.alert(
-      'Clear Chat',
-      'Are you sure you want to clear the conversation history?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear',
-          style: 'destructive',
-          onPress: () => {
-            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-            setMessages([]);
-          }
-        }
-      ]
-    );
-  };
-
-  const handleSuggestionPress = (suggestion: string) => {
-    setMessage(suggestion);
-  };
-
-  const downloadImage = async (imageUrl: string) => {
-    try {
-      if (Platform.OS === 'web') {
-        const link = document.createElement('a');
-        link.href = imageUrl;
-        link.download = `vgpt-image-${Date.now()}.webp`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      } else {
-        await Share.share({
-          url: imageUrl,
-          title: 'Generated Image',
-        });
-      }
-    } catch (error) {
-      console.error('Download failed:', error);
-      Alert.alert('Error', 'Failed to download image.');
-    }
-  };
+  // ═══════════════════════════════════════════════════════════════════════════
+  // STREAMING CHAT
+  // ═══════════════════════════════════════════════════════════════════════════
 
   const handleSend = async () => {
-    if (!message.trim() || isLoading) return;
+    const text = input.trim();
+    if (!text || isLoading) return;
 
-    const userMessageText = message.trim();
-    setMessage('');
+    setInput('');
     setIsLoading(true);
 
-    const newUserMessage: Message = {
-      role: 'user',
-      content: userMessageText,
-      id: Date.now().toString(),
-    };
+    const userMsg: Message = { role: 'user', content: text, id: `${Date.now()}` };
+    const history = [...messages, userMsg];
+    setMessages(history);
 
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    const conversationMessages = [...messages, newUserMessage];
-    setMessages((prev) => [...prev, newUserMessage]);
-
-    let assistantMessageId: string | null = null;
+    const assistantId = `${Date.now()}-ai`;
+    setMessages(prev => [...prev, { role: 'assistant', content: '', id: assistantId, isStreaming: true }]);
 
     try {
-      const conversationHistory = conversationMessages.map((msg: Message) => ({
-        role: msg.role,
-        content: msg.content,
-      }));
+      const controller = new AbortController();
+      controllerRef.current?.abort();
+      controllerRef.current = controller;
 
       const currentModel = models.find(m => m.id === settings.model);
-
-      const veniceParameters: any = {
+      const veniceParams: any = {
         include_venice_system_prompt: settings.includeVeniceSystemPrompt,
       };
-
       if (currentModel?.model_spec?.capabilities?.supportsWebSearch) {
-        veniceParameters.enable_web_search = settings.webSearch;
-        veniceParameters.enable_web_citations = settings.webCitations;
+        veniceParams.enable_web_search = settings.webSearch;
+        veniceParams.enable_web_citations = settings.webCitations;
       }
 
-      if (currentModel?.model_spec?.capabilities?.supportsReasoning) {
-        if (settings.stripThinking !== undefined) veniceParameters.strip_thinking_response = settings.stripThinking;
-        if (settings.disableThinking !== undefined) veniceParameters.disable_thinking = settings.disableThinking;
-      }
-
-      const requestBody: Record<string, any> = {
+      const body = {
         model: settings.model,
-        messages: conversationHistory,
+        messages: history.map(m => ({ role: m.role, content: m.content })),
         stream: true,
-        venice_parameters: veniceParameters,
+        venice_parameters: veniceParams,
+        temperature: settings.temperature,
+        top_p: settings.topP,
+        max_completion_tokens: settings.maxTokens,
       };
 
-      if (settings.temperature !== undefined) requestBody.temperature = settings.temperature;
-      if (settings.topP !== undefined) requestBody.top_p = settings.topP;
-      if (settings.minP !== undefined) requestBody.min_p = settings.minP;
-      if (settings.maxTokens !== undefined) requestBody.max_completion_tokens = settings.maxTokens;
-      if (settings.topK !== undefined) requestBody.top_k = settings.topK;
-      if (settings.repetitionPenalty !== undefined) requestBody.repetition_penalty = settings.repetitionPenalty;
-
-      const controller = new AbortController();
-      activeRequestControllerRef.current?.abort();
-      activeRequestControllerRef.current = controller;
+      startTimeRef.current = Date.now();
+      tokenRef.current = 0;
 
       const response = await fetch(VENICE_CHAT_COMPLETIONS_ENDPOINT, {
         method: 'POST',
@@ -393,44 +258,19 @@ export default function FullAppScreen() {
           Authorization: `Bearer ${VENICE_API_KEY}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal as any,
+        body: JSON.stringify(body),
+        signal: controller.signal,
       });
 
-      activeRequestControllerRef.current = null;
+      if (!response.ok) throw new Error(`API error: ${response.status}`);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Venice API error: ${response.status} - ${errorText}`);
-      }
+      let content = '';
+      let usage: any = null;
 
-      assistantMessageId = `${Date.now()}-assistant`;
-      responseStartTimeRef.current = Date.now();
-      tokenCountRef.current = 0;
-
-      const placeholderMessage: Message = {
-        role: 'assistant',
-        content: '',
-        id: assistantMessageId,
-      };
-
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      setMessages((prev) => [...prev, placeholderMessage]);
-
-      const updateAssistantMessage = (partial: Partial<Message>) => {
-        if (!assistantMessageId) return;
-        setMessages((prev: Message[]) =>
-          prev.map((msg) => (msg.id === assistantMessageId ? { ...msg, ...partial } : msg))
-        );
-      };
-
-      let rawAssistantContent = '';
-      let finalUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null;
-      const contentType = response.headers.get('content-type') ?? '';
-
+      const contentType = response.headers.get('content-type') || '';
       if (contentType.includes('text/event-stream') && response.body) {
         const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
+        const decoder = new TextDecoder();
         let buffer = '';
 
         while (true) {
@@ -438,172 +278,113 @@ export default function FullAppScreen() {
           if (done) break;
 
           buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split(/\r?\n/);
-          buffer = lines.pop() ?? '';
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
 
           for (const line of lines) {
-            if (line.startsWith('data:')) {
-              const data = line.replace(/^data:\s*/, '').trim();
-              if (data === '[DONE]') break;
+            if (!line.startsWith('data:')) continue;
+            const data = line.slice(5).trim();
+            if (data === '[DONE]') break;
 
-              try {
-                const parsed = JSON.parse(data);
-                const choice = parsed?.choices?.[0];
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.usage) usage = parsed.usage;
 
-                if (parsed?.usage) {
-                  finalUsage = parsed.usage;
-                  tokenCountRef.current = finalUsage?.total_tokens || finalUsage?.completion_tokens || tokenCountRef.current;
-                }
+              const delta = parsed?.choices?.[0]?.delta?.content;
+              if (delta) {
+                content += delta;
+                tokenRef.current += Math.ceil(delta.length / 4);
 
-                if (choice?.delta?.content) {
-                  rawAssistantContent += choice.delta.content;
-                  const newTokens = Math.ceil(choice.delta.content.length / 4);
-                  tokenCountRef.current += newTokens;
+                const elapsed = (Date.now() - startTimeRef.current) / 1000;
+                const tps = elapsed > 0 ? tokenRef.current / elapsed : 0;
 
-                  const now = Date.now();
-                  const elapsed = (now - responseStartTimeRef.current) / 1000;
-                  const tokensPerSecond = elapsed > 0 ? tokenCountRef.current / elapsed : 0;
-
-                  updateAssistantMessage({
-                    content: rawAssistantContent,
-                    metrics: {
-                      tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
-                      totalTokens: tokenCountRef.current,
-                    }
-                  });
-                }
-                if (choice?.message?.content) {
-                  rawAssistantContent = choice.message.content;
-                  updateAssistantMessage({ content: rawAssistantContent });
-                }
-              } catch (streamError) {
-                console.error('Failed to parse stream chunk:', streamError);
+                setMessages(prev => prev.map(m =>
+                  m.id === assistantId
+                    ? { ...m, content, metrics: { tokensPerSecond: Math.round(tps * 10) / 10, totalTokens: tokenRef.current } }
+                    : m
+                ));
               }
-            }
+            } catch {}
           }
         }
-
-        reader.releaseLock?.();
-
-        const responseTime = (Date.now() - responseStartTimeRef.current) / 1000;
-        const currentModel = models.find(m => m.id === settings.model);
-        const inputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.input);
-        const outputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.output);
-
-        let inputTokens = finalUsage?.prompt_tokens;
-        let outputTokens = finalUsage?.completion_tokens;
-        let totalTokens = finalUsage?.total_tokens;
-
-        if (!inputTokens || !outputTokens) {
-          const estimatedOutputTokens = Math.ceil(rawAssistantContent.length / 4);
-          const conversationText = conversationHistory.map(m => m.content).join(' ');
-          const estimatedInputTokens = Math.ceil(conversationText.length / 4);
-
-          inputTokens = inputTokens || estimatedInputTokens;
-          outputTokens = outputTokens || estimatedOutputTokens;
-          totalTokens = totalTokens || (inputTokens + outputTokens);
-        }
-
-        const tokensPerSecond = responseTime > 0 && totalTokens ? totalTokens / responseTime : 0;
-
-        let cost = 0;
-        if (inputPrice && inputTokens) cost += (inputPrice * inputTokens) / 1_000_000;
-        if (outputPrice && outputTokens) cost += (outputPrice * outputTokens) / 1_000_000;
-
-        updateAssistantMessage({
-          metrics: {
-            tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
-            totalTokens: totalTokens,
-            inputTokens: inputTokens,
-            outputTokens: outputTokens,
-            cost: cost > 0 ? Math.round(cost * 10000) / 10000 : undefined,
-            responseTime: Math.round(responseTime * 10) / 10,
-          }
-        });
+        reader.releaseLock();
       } else {
         const data = await response.json();
-        rawAssistantContent = data?.choices?.[0]?.message?.content ?? '';
-        const responseTime = (Date.now() - responseStartTimeRef.current) / 1000;
-        const usage = data?.usage;
-
-        const currentModel = models.find(m => m.id === settings.model);
-        const inputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.input);
-        const outputPrice = resolveUsdPrice(currentModel?.model_spec.pricing?.output);
-
-        let cost = 0;
-        if (usage) {
-          if (inputPrice && usage.prompt_tokens) cost += (inputPrice * usage.prompt_tokens) / 1_000_000;
-          if (outputPrice && usage.completion_tokens) cost += (outputPrice * usage.completion_tokens) / 1_000_000;
-        }
-
-        const tokensPerSecond = usage && responseTime > 0 ? (usage.total_tokens || 0) / responseTime : 0;
-
-        updateAssistantMessage({
-          content: rawAssistantContent || "Sorry, I couldn't generate a response.",
-          metrics: usage ? {
-            tokensPerSecond: Math.round(tokensPerSecond * 10) / 10,
-            totalTokens: usage.total_tokens,
-            inputTokens: usage.prompt_tokens,
-            outputTokens: usage.completion_tokens,
-            cost: cost > 0 ? Math.round(cost * 10000) / 10000 : undefined,
-            responseTime: Math.round(responseTime * 10) / 10,
-          } : undefined,
-        });
-      }
-    } catch (error) {
-      console.error('Error sending message:', error);
-      const isAbortError = error instanceof Error && error.name === 'AbortError';
-      const fallbackText = isAbortError
-        ? 'The request was cancelled. Please try again.'
-        : 'Something went wrong. Please try again.';
-
-      if (assistantMessageId) {
-        setMessages((prev: Message[]) =>
-          prev.map((msg) =>
-            msg.id === assistantMessageId
-              ? { ...msg, content: fallbackText }
-              : msg
-          )
-        );
+        content = data?.choices?.[0]?.message?.content || '';
+        usage = data?.usage;
       }
 
-      Alert.alert(isAbortError ? 'Request cancelled' : 'Error', fallbackText);
+      // Final metrics
+      const responseTime = (Date.now() - startTimeRef.current) / 1000;
+      const inputTokens = usage?.prompt_tokens;
+      const outputTokens = usage?.completion_tokens;
+      const totalTokens = usage?.total_tokens || tokenRef.current;
+      const tps = responseTime > 0 ? totalTokens / responseTime : 0;
+
+      const model = models.find(m => m.id === settings.model);
+      const inPrice = resolveUsdPrice(model?.model_spec?.pricing?.input);
+      const outPrice = resolveUsdPrice(model?.model_spec?.pricing?.output);
+      let cost = 0;
+      if (inPrice && inputTokens) cost += (inPrice * inputTokens) / 1_000_000;
+      if (outPrice && outputTokens) cost += (outPrice * outputTokens) / 1_000_000;
+
+      setMessages(prev => prev.map(m =>
+        m.id === assistantId
+          ? {
+              ...m,
+              content: content || 'No response received.',
+              isStreaming: false,
+              metrics: {
+                tokensPerSecond: Math.round(tps * 10) / 10,
+                totalTokens,
+                inputTokens,
+                outputTokens,
+                responseTime: Math.round(responseTime * 10) / 10,
+                cost: cost > 0 ? Math.round(cost * 10000) / 10000 : undefined,
+              },
+            }
+          : m
+      ));
+    } catch (e: any) {
+      const msg = e.name === 'AbortError' ? 'Request cancelled.' : 'Something went wrong.';
+      setMessages(prev => prev.map(m =>
+        m.id === assistantId ? { ...m, content: msg, isStreaming: false } : m
+      ));
     } finally {
       setIsLoading(false);
-      activeRequestControllerRef.current = null;
+      controllerRef.current = null;
     }
   };
 
-  const handleGenerateImage = async () => {
-    if (!imagePrompt.trim() || isGeneratingImage) return;
+  // ═══════════════════════════════════════════════════════════════════════════
+  // IMAGE GENERATION
+  // ═══════════════════════════════════════════════════════════════════════════
 
-    const currentImageModel = imageModels.find((model) => model.id === settings.imageModel);
-    if (!currentImageModel) {
-      Alert.alert('No image model', 'Please select an image generation model.');
+  const handleGenerate = async () => {
+    const prompt = imagePrompt.trim();
+    if (!prompt || isGenerating) return;
+
+    const model = imageModels.find(m => m.id === settings.imageModel);
+    if (!model) {
+      Alert.alert('No Model', 'Please select an image model.');
       return;
     }
 
-    setIsGeneratingImage(true);
-    setImageError(null);
+    setIsGenerating(true);
 
     try {
-      const payload: Record<string, any> = {
-        model: currentImageModel.id,
-        prompt: imagePrompt.trim(),
-        width: settings.imageWidth,
-        height: settings.imageHeight,
+      const payload = {
+        model: model.id,
+        prompt,
+        width: settings.imageWidth || 1024,
+        height: settings.imageHeight || 1024,
+        steps: Math.min(settings.imageSteps || 8, 8),
+        cfg_scale: Math.max(1, Math.min(20, settings.imageGuidanceScale || 7.5)),
         format: 'webp',
         hide_watermark: false,
       };
 
-      if (settings.imageSteps !== undefined) {
-        payload.steps = Math.min(settings.imageSteps, 8);
-      }
-      if (settings.imageGuidanceScale !== undefined) {
-        payload.cfg_scale = Math.max(1, Math.min(20, settings.imageGuidanceScale));
-      }
-
-      const response = await fetch(VENICE_IMAGE_GENERATIONS_ENDPOINT, {
+      const res = await fetch(VENICE_IMAGE_GENERATIONS_ENDPOINT, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${VENICE_API_KEY}`,
@@ -612,455 +393,437 @@ export default function FullAppScreen() {
         body: JSON.stringify(payload),
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Venice image API error: ${response.status} - ${errorText}`);
-      }
+      if (!res.ok) throw new Error(`Image API error: ${res.status}`);
 
-      const data = await response.json();
-      const imagesArray = data?.images;
+      const data = await res.json();
+      if (!data.images?.length) throw new Error('No images returned.');
 
-      if (!imagesArray || !Array.isArray(imagesArray) || imagesArray.length === 0) {
-        throw new Error('Image response did not include images array.');
-      }
-
-      const base64String = imagesArray[0];
-      const imageData = `data:image/webp;base64,${base64String}`;
-
-      const generated: GeneratedImage = {
+      const img: GeneratedImage = {
         id: `${Date.now()}`,
-        prompt: imagePrompt.trim(),
-        modelId: currentImageModel.id,
+        prompt,
+        modelId: model.id,
         createdAt: Date.now(),
-        imageData,
+        imageData: `data:image/webp;base64,${data.images[0]}`,
         width: payload.width,
         height: payload.height,
       };
 
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      setGeneratedImages((prev: GeneratedImage[]) => [generated, ...prev]);
+      setImages(prev => [img, ...prev]);
       setImagePrompt('');
-    } catch (error) {
-      console.error('Failed to generate image:', error);
-      setImageError(error instanceof Error ? error.message : 'Failed to generate image.');
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to generate image.');
     } finally {
-      setIsGeneratingImage(false);
+      setIsGenerating(false);
     }
   };
 
-  const formatMessageContent = (content: string): React.ReactNode => {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RENDER HELPERS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const renderCode = (content: string): React.ReactNode => {
     const parts = content.split(/(```[\s\S]*?```)/g);
-    return parts.map((part, index) => {
-      if (part.startsWith('```') && part.endsWith('```')) {
-        const codeContent = part.replace(/^```[a-z]*\n?/, '').replace(/```$/, '');
+    return parts.map((part, i) => {
+      if (part.startsWith('```')) {
+        const code = part.replace(/^```\w*\n?/, '').replace(/```$/, '');
         return (
-          <View key={index} style={styles.codeBlock}>
-            <View style={styles.codeHeader}>
-              <Text style={styles.codeHeaderText}>CODE</Text>
-              <View style={styles.codeHeaderDot} />
-            </View>
+          <View key={i} style={styles.codeBlock}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <Text style={styles.codeText}>{codeContent}</Text>
+              <Text style={styles.codeText}>{code}</Text>
             </ScrollView>
           </View>
         );
       }
-      return (
-        <Text key={index} style={styles.messageText}>
-          {part}
-        </Text>
-      );
+      return <Text key={i} style={styles.msgText}>{part}</Text>;
     });
   };
 
-  // ===== RENDER COMPONENTS =====
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LOADING STATE
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  const renderHeader = () => (
-    <View style={[styles.header, { paddingTop: insets.top }]}>
-      <View style={styles.headerLeft}>
-        <View style={styles.logoMark}>
-          <View style={styles.logoBar1} />
-          <View style={styles.logoBar2} />
-          <View style={styles.logoBar3} />
-        </View>
-        <Text style={styles.logoText}>vGPT</Text>
-      </View>
-
-      <TouchableOpacity onPress={() => setShowModelPicker(true)} style={styles.modelSelector}>
-        <Text style={styles.modelSelectorText} numberOfLines={1}>
-          {getModelDisplayName(settings.model)}
-        </Text>
-        <Feather name="chevron-down" size={14} color={THEME.saffron} />
-      </TouchableOpacity>
-
-      <View style={styles.headerRight}>
-        <TouchableOpacity onPress={handleClearChat} style={styles.iconBtn}>
-          <Feather name="trash-2" size={18} color={THEME.textSecondary} />
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.push('/settings')} style={styles.iconBtn}>
-          <Feather name="sliders" size={18} color={THEME.textSecondary} />
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
-  const renderTabBar = () => (
-    <View style={styles.tabBar}>
-      <TouchableOpacity
-        onPress={() => setActiveTab('chat')}
-        style={[styles.tab, activeTab === 'chat' && styles.activeTab]}
-      >
-        <Feather name="message-circle" size={16} color={activeTab === 'chat' ? THEME.saffron : THEME.textMuted} />
-        <Text style={[styles.tabText, activeTab === 'chat' && styles.activeTabText]}>Chat</Text>
-        {activeTab === 'chat' && <View style={styles.tabIndicator} />}
-      </TouchableOpacity>
-      <TouchableOpacity
-        onPress={() => setActiveTab('image')}
-        style={[styles.tab, activeTab === 'image' && styles.activeTab]}
-      >
-        <Feather name="image" size={16} color={activeTab === 'image' ? THEME.green : THEME.textMuted} />
-        <Text style={[styles.tabText, activeTab === 'image' && styles.activeTabTextGreen]}>Create</Text>
-        {activeTab === 'image' && <View style={styles.tabIndicatorGreen} />}
-      </TouchableOpacity>
-    </View>
-  );
-
-  const renderWelcome = () => (
-    <View style={styles.welcomeContainer}>
-      <View style={styles.welcomeGlow} />
-      <View style={styles.welcomeIcon}>
-        <Feather name="zap" size={32} color={THEME.saffron} />
-      </View>
-      <Text style={styles.welcomeTitle}>What can I help you with?</Text>
-      <Text style={styles.welcomeSubtitle}>Ask anything or try a suggestion below</Text>
-
-      <View style={styles.suggestionsContainer}>
-        {SUGGESTIONS.map((suggestion, index) => (
-          <TouchableOpacity
-            key={index}
-            onPress={() => handleSuggestionPress(suggestion)}
-            style={[
-              styles.suggestionChip,
-              index % 2 === 0 ? styles.suggestionChipSaffron : styles.suggestionChipNavy
-            ]}
-          >
-            <Text style={styles.suggestionText}>{suggestion}</Text>
-            <Feather name="arrow-up-right" size={14} color={THEME.textSecondary} />
-          </TouchableOpacity>
-        ))}
-      </View>
-    </View>
-  );
-
-  const renderMessages = () => (
-    <FlatList
-      ref={flatListRef}
-      data={messages}
-      renderItem={({ item }) => (
-        <View style={[styles.messageRow, item.role === 'assistant' && styles.assistantRow]}>
-          <View style={[styles.avatar, item.role === 'user' ? styles.userAvatar : styles.assistantAvatar]}>
-            <Feather
-              name={item.role === 'user' ? 'user' : 'cpu'}
-              size={14}
-              color={item.role === 'user' ? THEME.navy : THEME.saffron}
-            />
-          </View>
-          <View style={styles.messageContent}>
-            <Text style={styles.roleLabel}>
-              {item.role === 'user' ? 'You' : 'vGPT'}
-            </Text>
-            {formatMessageContent(item.content)}
-            {item.metrics && item.role === 'assistant' && (
-              <View style={styles.metricsRow}>
-                <View style={styles.metricBadge}>
-                  <Text style={styles.metricText}>
-                    {item.metrics.tokensPerSecond?.toFixed(1)} tok/s
-                  </Text>
-                </View>
-                <View style={styles.metricBadge}>
-                  <Text style={styles.metricText}>
-                    {item.metrics.totalTokens} tokens
-                  </Text>
-                </View>
-                {item.metrics.cost && (
-                  <View style={styles.metricBadge}>
-                    <Text style={styles.metricText}>
-                      ${item.metrics.cost.toFixed(4)}
-                    </Text>
-                  </View>
-                )}
-              </View>
-            )}
-          </View>
-        </View>
-      )}
-      keyExtractor={(item) => item.id}
-      contentContainerStyle={styles.listContent}
-      onScroll={handleScroll}
-      scrollEventThrottle={16}
-      ListEmptyComponent={renderWelcome()}
-    />
-  );
-
-  const renderComposer = () => (
-    <View style={[styles.composerOuter, { paddingBottom: insets.bottom + 12 }]}>
-      <View style={styles.composerContainer}>
-        <TextInput
-          style={styles.input}
-          placeholder="Message vGPT..."
-          placeholderTextColor={THEME.textMuted}
-          value={message}
-          onChangeText={setMessage}
-          multiline
-          editable={!isLoading}
-        />
-        <TouchableOpacity
-          onPress={handleSend}
-          disabled={isLoading || !message.trim()}
-          style={[styles.sendBtn, (isLoading || !message.trim()) && styles.sendBtnDisabled]}
-        >
-          {isLoading ? (
-            <ActivityIndicator size="small" color={THEME.background} />
-          ) : (
-            <Feather name="arrow-up" size={18} color={THEME.background} />
-          )}
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
-  const renderImageTab = () => (
-    <View style={styles.imageTabContainer}>
-      <ScrollView contentContainerStyle={styles.imageScrollContent}>
-        {generatedImages.length === 0 ? (
-          <View style={styles.imageWelcome}>
-            <View style={styles.imageWelcomeIcon}>
-              <Feather name="image" size={32} color={THEME.green} />
-            </View>
-            <Text style={styles.welcomeTitle}>Create with AI</Text>
-            <Text style={styles.welcomeSubtitle}>Generate stunning images from text</Text>
-          </View>
-        ) : (
-          <View style={styles.imageGrid}>
-            {generatedImages.map((img) => (
-              <View key={img.id} style={styles.imageCard}>
-                <Image
-                  source={{ uri: img.imageData }}
-                  style={[styles.genImage, { aspectRatio: (img.width || 1024) / (img.height || 1024) }]}
-                  contentFit="cover"
-                />
-                <View style={styles.imageOverlay}>
-                  <Text style={styles.imagePromptText} numberOfLines={2}>{img.prompt}</Text>
-                  <TouchableOpacity onPress={() => downloadImage(img.imageData)} style={styles.downloadBtn}>
-                    <Feather name="download" size={16} color={THEME.white} />
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))}
-          </View>
-        )}
-      </ScrollView>
-
-      {showImageSettings && (
-        <View style={styles.settingsPanel}>
-          <View style={styles.settingsPanelHeader}>
-            <Text style={styles.settingsPanelTitle}>Generation Settings</Text>
-            <TouchableOpacity onPress={() => setShowImageSettings(false)}>
-              <Feather name="x" size={18} color={THEME.textSecondary} />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>Steps</Text>
-            <Text style={styles.settingValue}>{settings.imageSteps || 8}</Text>
-          </View>
-          <Slider
-            value={settings.imageSteps || 8}
-            minimumValue={1}
-            maximumValue={8}
-            step={1}
-            onValueChange={(v) => updateSettings({ imageSteps: v })}
-            minimumTrackTintColor={THEME.green}
-            maximumTrackTintColor={THEME.borderLight}
-            thumbTintColor={THEME.green}
-          />
-
-          <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>Guidance</Text>
-            <Text style={styles.settingValue}>{(settings.imageGuidanceScale || 7.5).toFixed(1)}</Text>
-          </View>
-          <Slider
-            value={settings.imageGuidanceScale || 7.5}
-            minimumValue={1}
-            maximumValue={20}
-            step={0.5}
-            onValueChange={(v) => updateSettings({ imageGuidanceScale: v })}
-            minimumTrackTintColor={THEME.green}
-            maximumTrackTintColor={THEME.borderLight}
-            thumbTintColor={THEME.green}
-          />
-
-          <View style={styles.sizeSelector}>
-            {[
-              { label: 'Square', w: 1024, h: 1024 },
-              { label: 'Portrait', w: 576, h: 1024 },
-              { label: 'Landscape', w: 1024, h: 576 },
-            ].map((size) => (
-              <TouchableOpacity
-                key={size.label}
-                onPress={() => updateSettings({ imageWidth: size.w, imageHeight: size.h })}
-                style={[
-                  styles.sizeBtn,
-                  settings.imageWidth === size.w && settings.imageHeight === size.h && styles.sizeBtnActive
-                ]}
-              >
-                <Text style={[
-                  styles.sizeBtnText,
-                  settings.imageWidth === size.w && settings.imageHeight === size.h && styles.sizeBtnTextActive
-                ]}>{size.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      )}
-
-      <View style={[styles.composerOuter, { paddingBottom: insets.bottom + 12 }]}>
-        <View style={styles.composerContainer}>
-          <TouchableOpacity onPress={() => setShowImageSettings(!showImageSettings)} style={styles.settingsToggle}>
-            <Feather name="sliders" size={18} color={showImageSettings ? THEME.green : THEME.textMuted} />
-          </TouchableOpacity>
-          <TextInput
-            style={styles.input}
-            placeholder="Describe an image..."
-            placeholderTextColor={THEME.textMuted}
-            value={imagePrompt}
-            onChangeText={setImagePrompt}
-            multiline
-            editable={!isGeneratingImage}
-          />
-          <TouchableOpacity
-            onPress={handleGenerateImage}
-            disabled={isGeneratingImage || !imagePrompt.trim()}
-            style={[styles.sendBtnGreen, (isGeneratingImage || !imagePrompt.trim()) && styles.sendBtnDisabled]}
-          >
-            {isGeneratingImage ? (
-              <ActivityIndicator size="small" color={THEME.background} />
-            ) : (
-              <Feather name="zap" size={18} color={THEME.background} />
-            )}
-          </TouchableOpacity>
-        </View>
-      </View>
-    </View>
-  );
-
-  const renderModelPicker = () => (
-    <Modal visible={showModelPicker} animationType="slide" presentationStyle="formSheet">
-      <View style={styles.modalContainer}>
-        <View style={styles.modalHeader}>
-          <Text style={styles.modalTitle}>Select Model</Text>
-          <TouchableOpacity onPress={() => setShowModelPicker(false)} style={styles.modalClose}>
-            <Feather name="x" size={24} color={THEME.textPrimary} />
-          </TouchableOpacity>
-        </View>
-        <FlatList
-          data={activeTab === 'chat' ? textModels : imageModels}
-          renderItem={({ item }) => {
-            const isSelected = (activeTab === 'chat' ? settings.model : settings.imageModel) === item.id;
-            return (
-              <TouchableOpacity
-                onPress={() => activeTab === 'chat' ? handleChatModelSelect(item.id) : handleImageModelSelect(item.id)}
-                style={[styles.modelItem, isSelected && styles.modelItemSelected]}
-              >
-                <View style={styles.modelInfo}>
-                  <Text style={styles.modelName}>{item.model_spec.name || item.id}</Text>
-                  <Text style={styles.modelId}>{item.id}</Text>
-                </View>
-                {isSelected && (
-                  <View style={styles.checkMark}>
-                    <Feather name="check" size={16} color={THEME.saffron} />
-                  </View>
-                )}
-              </TouchableOpacity>
-            );
-          }}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.modalList}
-        />
-      </View>
-    </Modal>
-  );
-
-  // ===== LOADING STATE =====
-  if (isLoadingModels) {
+  if (loadingModels) {
     return (
-      <View style={styles.loadingContainer}>
-        <View style={styles.loadingSpinner}>
-          <ActivityIndicator size="large" color={THEME.saffron} />
+      <View style={styles.loadingScreen}>
+        <View style={styles.loadingPulse}>
+          <View style={styles.loadingDot} />
         </View>
-        <Text style={styles.loadingText}>Initializing...</Text>
+        <Text style={styles.loadingText}>Initializing</Text>
       </View>
     );
   }
 
-  // ===== MAIN RENDER =====
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MAIN RENDER
+  // ═══════════════════════════════════════════════════════════════════════════
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="light" />
-      {renderHeader()}
-      {renderTabBar()}
+
+      {/* Header */}
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 8) }]}>
+        <View style={styles.headerLeft}>
+          <View style={styles.logoWrapper}>
+            <View style={styles.logoBleu} />
+            <View style={styles.logoBlanc} />
+            <View style={styles.logoRouge} />
+          </View>
+          <Text style={styles.logoText}>vGPT</Text>
+        </View>
+
+        <TouchableOpacity onPress={() => setShowModels(true)} style={styles.modelBtn}>
+          <Text style={styles.modelBtnText} numberOfLines={1}>
+            {getModelName(activeTab === 'chat' ? settings.model : settings.imageModel)}
+          </Text>
+          <Feather name="chevron-down" size={14} color={THEME.bleu} />
+        </TouchableOpacity>
+
+        <View style={styles.headerRight}>
+          <TouchableOpacity
+            onPress={() => setMessages([])}
+            style={styles.iconBtn}
+            disabled={messages.length === 0}
+          >
+            <Feather name="trash-2" size={18} color={messages.length ? THEME.textSecondary : THEME.textDim} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.push('/settings')} style={styles.iconBtn}>
+            <Feather name="settings" size={18} color={THEME.textSecondary} />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Tabs */}
+      <View style={styles.tabs}>
+        {[
+          { key: 'chat', label: 'Chat', icon: 'message-circle' },
+          { key: 'create', label: 'Create', icon: 'image' },
+        ].map(tab => (
+          <TouchableOpacity
+            key={tab.key}
+            onPress={() => setActiveTab(tab.key as any)}
+            style={[styles.tab, activeTab === tab.key && styles.tabActive]}
+          >
+            <Feather
+              name={tab.icon as any}
+              size={15}
+              color={activeTab === tab.key ? THEME.bleu : THEME.textMuted}
+            />
+            <Text style={[styles.tabLabel, activeTab === tab.key && styles.tabLabelActive]}>
+              {tab.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.flex1}
+        style={styles.flex}
       >
         {activeTab === 'chat' ? (
-          <View style={styles.flex1}>
-            {renderMessages()}
-            {renderComposer()}
-            {showScrollToBottom && (
-              <TouchableOpacity onPress={scrollToBottom} style={styles.scrollToBottom}>
-                <Feather name="chevron-down" size={20} color={THEME.textPrimary} />
-              </TouchableOpacity>
-            )}
+          <View style={styles.flex}>
+            {/* Messages */}
+            <FlatList
+              ref={listRef}
+              data={messages}
+              keyExtractor={m => m.id}
+              contentContainerStyle={[styles.msgList, messages.length === 0 && styles.msgListEmpty]}
+              onContentSizeChange={() => listRef.current?.scrollToEnd()}
+              ListEmptyComponent={
+                <View style={styles.empty}>
+                  <View style={styles.emptyIcon}>
+                    <Feather name="message-circle" size={28} color={THEME.bleu} />
+                  </View>
+                  <Text style={styles.emptyTitle}>Start a conversation</Text>
+                  <Text style={styles.emptySub}>Ask anything or try a suggestion</Text>
+
+                  <View style={styles.suggestions}>
+                    {SUGGESTIONS.map((s, i) => (
+                      <TouchableOpacity
+                        key={i}
+                        style={styles.suggestion}
+                        onPress={() => setInput(s.text)}
+                      >
+                        <Feather name={s.icon as any} size={14} color={THEME.orange} />
+                        <Text style={styles.suggestionText}>{s.text}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              }
+              renderItem={({ item }) => (
+                <View style={[styles.msgRow, item.role === 'assistant' && styles.msgRowAi]}>
+                  <View style={[styles.avatar, item.role === 'user' ? styles.avatarUser : styles.avatarAi]}>
+                    <Feather
+                      name={item.role === 'user' ? 'user' : 'cpu'}
+                      size={12}
+                      color={item.role === 'user' ? THEME.noir : THEME.bleu}
+                    />
+                  </View>
+                  <View style={styles.msgBody}>
+                    <Text style={styles.msgRole}>{item.role === 'user' ? 'You' : 'AI'}</Text>
+                    {item.isStreaming && !item.content ? (
+                      <View style={styles.typing}>
+                        <View style={[styles.typingDot, styles.typingDot1]} />
+                        <View style={[styles.typingDot, styles.typingDot2]} />
+                        <View style={[styles.typingDot, styles.typingDot3]} />
+                      </View>
+                    ) : (
+                      renderCode(item.content)
+                    )}
+                    {item.metrics && !item.isStreaming && (
+                      <View style={styles.metrics}>
+                        <Text style={styles.metric}>{item.metrics.tokensPerSecond} tok/s</Text>
+                        <Text style={styles.metricDot}>·</Text>
+                        <Text style={styles.metric}>{item.metrics.totalTokens} tokens</Text>
+                        {item.metrics.cost && (
+                          <>
+                            <Text style={styles.metricDot}>·</Text>
+                            <Text style={styles.metric}>${item.metrics.cost.toFixed(4)}</Text>
+                          </>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                </View>
+              )}
+            />
+
+            {/* Composer */}
+            <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+              <View style={styles.composerInner}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Ask anything..."
+                  placeholderTextColor={THEME.textMuted}
+                  value={input}
+                  onChangeText={setInput}
+                  multiline
+                  editable={!isLoading}
+                  onSubmitEditing={handleSend}
+                />
+                <TouchableOpacity
+                  onPress={handleSend}
+                  disabled={!input.trim() || isLoading}
+                  style={[styles.sendBtn, (!input.trim() || isLoading) && styles.sendBtnDisabled]}
+                >
+                  {isLoading ? (
+                    <ActivityIndicator size="small" color={THEME.noir} />
+                  ) : (
+                    <Feather name="arrow-up" size={18} color={THEME.noir} />
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
           </View>
         ) : (
-          renderImageTab()
+          /* CREATE TAB */
+          <View style={styles.flex}>
+            <ScrollView contentContainerStyle={styles.createContent}>
+              {images.length === 0 ? (
+                <View style={styles.createEmpty}>
+                  <View style={styles.createEmptyIcon}>
+                    <Feather name="image" size={28} color={THEME.orange} />
+                  </View>
+                  <Text style={styles.emptyTitle}>Generate images</Text>
+                  <Text style={styles.emptySub}>Describe what you want to create</Text>
+                </View>
+              ) : (
+                <View style={styles.imageGrid}>
+                  {images.map(img => (
+                    <View key={img.id} style={styles.imageCard}>
+                      <Image
+                        source={{ uri: img.imageData }}
+                        style={[styles.image, { aspectRatio: (img.width || 1) / (img.height || 1) }]}
+                        contentFit="cover"
+                      />
+                      <View style={styles.imageOverlay}>
+                        <Text style={styles.imagePrompt} numberOfLines={2}>{img.prompt}</Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </ScrollView>
+
+            {/* Image Settings */}
+            {imageSettings && (
+              <View style={styles.imgSettings}>
+                <View style={styles.imgSettingsHeader}>
+                  <Text style={styles.imgSettingsTitle}>Settings</Text>
+                  <TouchableOpacity onPress={() => setImageSettings(false)}>
+                    <Feather name="x" size={18} color={THEME.textSecondary} />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.settingRow}>
+                  <Text style={styles.settingLabel}>Steps</Text>
+                  <Text style={styles.settingValue}>{settings.imageSteps || 8}</Text>
+                </View>
+                <Slider
+                  value={settings.imageSteps || 8}
+                  minimumValue={1}
+                  maximumValue={8}
+                  step={1}
+                  onValueChange={v => updateSettings({ imageSteps: v })}
+                  minimumTrackTintColor={THEME.orange}
+                  maximumTrackTintColor={THEME.border}
+                  thumbTintColor={THEME.orange}
+                />
+
+                <View style={styles.settingRow}>
+                  <Text style={styles.settingLabel}>Guidance</Text>
+                  <Text style={styles.settingValue}>{(settings.imageGuidanceScale || 7.5).toFixed(1)}</Text>
+                </View>
+                <Slider
+                  value={settings.imageGuidanceScale || 7.5}
+                  minimumValue={1}
+                  maximumValue={20}
+                  step={0.5}
+                  onValueChange={v => updateSettings({ imageGuidanceScale: v })}
+                  minimumTrackTintColor={THEME.orange}
+                  maximumTrackTintColor={THEME.border}
+                  thumbTintColor={THEME.orange}
+                />
+
+                <View style={styles.sizes}>
+                  {[
+                    { label: '1:1', w: 1024, h: 1024 },
+                    { label: '9:16', w: 576, h: 1024 },
+                    { label: '16:9', w: 1024, h: 576 },
+                  ].map(s => (
+                    <TouchableOpacity
+                      key={s.label}
+                      onPress={() => updateSettings({ imageWidth: s.w, imageHeight: s.h })}
+                      style={[
+                        styles.sizeBtn,
+                        settings.imageWidth === s.w && settings.imageHeight === s.h && styles.sizeBtnActive
+                      ]}
+                    >
+                      <Text style={[
+                        styles.sizeBtnText,
+                        settings.imageWidth === s.w && settings.imageHeight === s.h && styles.sizeBtnTextActive
+                      ]}>{s.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {/* Image Composer */}
+            <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+              <View style={styles.composerInner}>
+                <TouchableOpacity
+                  onPress={() => setImageSettings(!imageSettings)}
+                  style={styles.settingsToggle}
+                >
+                  <Feather name="sliders" size={18} color={imageSettings ? THEME.orange : THEME.textMuted} />
+                </TouchableOpacity>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Describe an image..."
+                  placeholderTextColor={THEME.textMuted}
+                  value={imagePrompt}
+                  onChangeText={setImagePrompt}
+                  multiline
+                  editable={!isGenerating}
+                />
+                <TouchableOpacity
+                  onPress={handleGenerate}
+                  disabled={!imagePrompt.trim() || isGenerating}
+                  style={[styles.sendBtnOrange, (!imagePrompt.trim() || isGenerating) && styles.sendBtnDisabled]}
+                >
+                  {isGenerating ? (
+                    <ActivityIndicator size="small" color={THEME.noir} />
+                  ) : (
+                    <Feather name="zap" size={18} color={THEME.noir} />
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
         )}
       </KeyboardAvoidingView>
 
-      {renderModelPicker()}
+      {/* Model Picker Modal */}
+      <Modal visible={showModels} animationType="slide" presentationStyle="formSheet">
+        <View style={styles.modal}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Select Model</Text>
+            <TouchableOpacity onPress={() => setShowModels(false)} style={styles.modalClose}>
+              <Feather name="x" size={24} color={THEME.text} />
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={activeTab === 'chat' ? textModels : imageModels}
+            keyExtractor={m => m.id}
+            contentContainerStyle={styles.modalList}
+            renderItem={({ item }) => {
+              const selected = (activeTab === 'chat' ? settings.model : settings.imageModel) === item.id;
+              return (
+                <TouchableOpacity
+                  onPress={() => {
+                    if (activeTab === 'chat') {
+                      updateSettings({ model: item.id });
+                    } else {
+                      updateSettings({ imageModel: item.id });
+                    }
+                    setShowModels(false);
+                  }}
+                  style={[styles.modelItem, selected && styles.modelItemSelected]}
+                >
+                  <View style={styles.modelInfo}>
+                    <Text style={styles.modelName}>{item.model_spec?.name || item.id}</Text>
+                    <Text style={styles.modelId}>{item.id}</Text>
+                  </View>
+                  {selected && (
+                    <View style={styles.modelCheck}>
+                      <Feather name="check" size={16} color={THEME.bleu} />
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            }}
+          />
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  flex1: { flex: 1 },
+// ═══════════════════════════════════════════════════════════════════════════
+// STYLES
+// ═══════════════════════════════════════════════════════════════════════════
 
-  container: {
-    flex: 1,
-    backgroundColor: THEME.background,
-  },
+const styles = StyleSheet.create({
+  flex: { flex: 1 },
+  container: { flex: 1, backgroundColor: THEME.noir },
 
   // Loading
-  loadingContainer: {
+  loadingScreen: {
     flex: 1,
-    backgroundColor: THEME.background,
+    backgroundColor: THEME.noir,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  loadingSpinner: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+  loadingPulse: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: THEME.surface,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
   },
+  loadingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: THEME.bleu,
+  },
   loadingText: {
-    color: THEME.textSecondary,
-    fontSize: 14,
+    color: THEME.textMuted,
+    fontSize: 13,
     letterSpacing: 2,
     textTransform: 'uppercase',
   },
@@ -1073,43 +836,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: THEME.borderLight,
+    borderBottomColor: THEME.border,
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
   },
-  logoMark: {
-    width: 24,
-    height: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
+  logoWrapper: {
+    width: 20,
+    height: 20,
+    flexDirection: 'row',
     gap: 2,
   },
-  logoBar1: {
-    width: 16,
-    height: 3,
-    backgroundColor: THEME.saffron,
-    borderRadius: 1,
-  },
-  logoBar2: {
-    width: 16,
-    height: 3,
-    backgroundColor: THEME.white,
-    borderRadius: 1,
-  },
-  logoBar3: {
-    width: 16,
-    height: 3,
-    backgroundColor: THEME.green,
-    borderRadius: 1,
-  },
+  logoBleu: { flex: 1, backgroundColor: THEME.bleu, borderRadius: 2 },
+  logoBlanc: { flex: 1, backgroundColor: THEME.blanc, borderRadius: 2 },
+  logoRouge: { flex: 1, backgroundColor: THEME.rouge, borderRadius: 2 },
   logoText: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
-    color: THEME.textPrimary,
-    letterSpacing: -0.5,
+    color: THEME.text,
+    letterSpacing: -0.3,
   },
   headerRight: {
     flexDirection: 'row',
@@ -1118,30 +865,30 @@ const styles = StyleSheet.create({
   iconBtn: {
     width: 36,
     height: 36,
-    borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
+    borderRadius: 8,
   },
-  modelSelector: {
+  modelBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: THEME.surface,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: THEME.border,
-    maxWidth: 180,
     gap: 6,
+    maxWidth: 160,
+    borderWidth: 1,
+    borderColor: THEME.borderAccent,
   },
-  modelSelectorText: {
-    color: THEME.textPrimary,
+  modelBtnText: {
+    color: THEME.text,
     fontSize: 13,
     fontWeight: '500',
   },
 
-  // Tab Bar
-  tabBar: {
+  // Tabs
+  tabs: {
     flexDirection: 'row',
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -1150,255 +897,206 @@ const styles = StyleSheet.create({
   tab: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderRadius: 8,
-    gap: 8,
-    position: 'relative',
+    gap: 6,
   },
-  activeTab: {
-    backgroundColor: THEME.surface,
+  tabActive: {
+    backgroundColor: THEME.glowBlue,
   },
-  tabText: {
-    fontSize: 14,
+  tabLabel: {
+    fontSize: 13,
     fontWeight: '500',
     color: THEME.textMuted,
   },
-  activeTabText: {
-    color: THEME.saffron,
-  },
-  activeTabTextGreen: {
-    color: THEME.green,
-  },
-  tabIndicator: {
-    position: 'absolute',
-    bottom: 4,
-    left: '50%',
-    marginLeft: -8,
-    width: 16,
-    height: 2,
-    backgroundColor: THEME.saffron,
-    borderRadius: 1,
-  },
-  tabIndicatorGreen: {
-    position: 'absolute',
-    bottom: 4,
-    left: '50%',
-    marginLeft: -8,
-    width: 16,
-    height: 2,
-    backgroundColor: THEME.green,
-    borderRadius: 1,
+  tabLabelActive: {
+    color: THEME.bleu,
   },
 
-  // Welcome
-  welcomeContainer: {
+  // Empty / Welcome
+  empty: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 32,
   },
-  welcomeGlow: {
-    position: 'absolute',
-    width: 300,
-    height: 300,
-    borderRadius: 150,
-    backgroundColor: THEME.glowSaffron,
-    opacity: 0.5,
-  },
-  welcomeIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 16,
-    backgroundColor: THEME.surface,
+  emptyIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 14,
+    backgroundColor: THEME.glowBlue,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: THEME.border,
+    marginBottom: 20,
   },
-  welcomeTitle: {
-    fontSize: 24,
+  emptyTitle: {
+    fontSize: 20,
     fontWeight: '600',
-    color: THEME.textPrimary,
-    marginBottom: 8,
-    textAlign: 'center',
+    color: THEME.text,
+    marginBottom: 6,
   },
-  welcomeSubtitle: {
-    fontSize: 15,
+  emptySub: {
+    fontSize: 14,
     color: THEME.textSecondary,
-    marginBottom: 32,
-    textAlign: 'center',
+    marginBottom: 28,
   },
-  suggestionsContainer: {
+  suggestions: {
     width: '100%',
-    maxWidth: 400,
-    gap: 10,
+    maxWidth: 360,
+    gap: 8,
   },
-  suggestionChip: {
+  suggestion: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderRadius: 12,
+    backgroundColor: THEME.surface,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 10,
+    gap: 10,
     borderWidth: 1,
-  },
-  suggestionChipSaffron: {
-    backgroundColor: THEME.glowSaffron,
     borderColor: THEME.border,
   },
-  suggestionChipNavy: {
-    backgroundColor: THEME.glowNavy,
-    borderColor: 'rgba(0, 0, 128, 0.3)',
-  },
   suggestionText: {
+    color: THEME.text,
     fontSize: 14,
-    color: THEME.textPrimary,
-    flex: 1,
   },
 
   // Messages
-  listContent: {
-    paddingBottom: 120,
+  msgList: {
+    paddingBottom: 100,
   },
-  messageRow: {
+  msgListEmpty: {
+    flex: 1,
+  },
+  msgRow: {
     flexDirection: 'row',
     paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingVertical: 14,
     gap: 12,
   },
-  assistantRow: {
+  msgRowAi: {
     backgroundColor: THEME.surface,
   },
   avatar: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
+    width: 26,
+    height: 26,
+    borderRadius: 7,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  userAvatar: {
-    backgroundColor: THEME.white,
+  avatarUser: {
+    backgroundColor: THEME.blanc,
   },
-  assistantAvatar: {
-    backgroundColor: THEME.surfaceLight,
+  avatarAi: {
+    backgroundColor: THEME.glowBlue,
     borderWidth: 1,
-    borderColor: THEME.border,
+    borderColor: THEME.borderAccent,
   },
-  messageContent: {
+  msgBody: {
     flex: 1,
   },
-  roleLabel: {
-    fontSize: 12,
+  msgRole: {
+    fontSize: 11,
     fontWeight: '600',
-    color: THEME.textSecondary,
+    color: THEME.textMuted,
     marginBottom: 4,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
-  messageText: {
+  msgText: {
     fontSize: 15,
-    lineHeight: 24,
-    color: THEME.textPrimary,
+    lineHeight: 22,
+    color: THEME.text,
   },
-  metricsRow: {
+  typing: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 12,
-  },
-  metricBadge: {
-    backgroundColor: THEME.surfaceLight,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  metricText: {
-    fontSize: 11,
-    color: THEME.textMuted,
-    fontWeight: '500',
-  },
-
-  // Code Block
-  codeBlock: {
-    backgroundColor: '#0d0d12',
-    borderRadius: 8,
-    marginVertical: 12,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: THEME.borderLight,
-  },
-  codeHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
+    gap: 4,
     paddingVertical: 8,
-    backgroundColor: THEME.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: THEME.borderLight,
   },
-  codeHeaderText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: THEME.textMuted,
-    letterSpacing: 1,
-  },
-  codeHeaderDot: {
+  typingDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: THEME.green,
+    backgroundColor: THEME.bleu,
+  },
+  typingDot1: { opacity: 0.3 },
+  typingDot2: { opacity: 0.6 },
+  typingDot3: { opacity: 1 },
+  metrics: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    gap: 6,
+  },
+  metric: {
+    fontSize: 11,
+    color: THEME.textMuted,
+  },
+  metricDot: {
+    color: THEME.textDim,
+    fontSize: 11,
+  },
+
+  // Code
+  codeBlock: {
+    backgroundColor: '#0a0a0c',
+    borderRadius: 8,
+    padding: 12,
+    marginVertical: 8,
+    borderWidth: 1,
+    borderColor: THEME.border,
   },
   codeText: {
-    color: THEME.textPrimary,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     fontSize: 13,
-    padding: 16,
+    color: THEME.text,
+    lineHeight: 20,
   },
 
   // Composer
-  composerOuter: {
+  composer: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
     paddingHorizontal: 16,
     paddingTop: 8,
-    backgroundColor: THEME.background,
+    backgroundColor: THEME.noir,
+    borderTopWidth: 1,
+    borderTopColor: THEME.border,
   },
-  composerContainer: {
+  composerInner: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     backgroundColor: THEME.surface,
-    borderRadius: 16,
+    borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: THEME.borderLight,
     gap: 8,
+    borderWidth: 1,
+    borderColor: THEME.border,
   },
   input: {
     flex: 1,
-    color: THEME.textPrimary,
+    color: THEME.text,
     fontSize: 15,
-    maxHeight: 120,
-    paddingVertical: 8,
+    maxHeight: 100,
+    paddingVertical: 6,
   },
   sendBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: THEME.saffron,
+    width: 34,
+    height: 34,
+    borderRadius: 9,
+    backgroundColor: THEME.bleu,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  sendBtnGreen: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: THEME.green,
+  sendBtnOrange: {
+    width: 34,
+    height: 34,
+    borderRadius: 9,
+    backgroundColor: THEME.orange,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1406,61 +1104,41 @@ const styles = StyleSheet.create({
     opacity: 0.3,
   },
   settingsToggle: {
-    width: 36,
-    height: 36,
+    width: 34,
+    height: 34,
     justifyContent: 'center',
     alignItems: 'center',
   },
 
-  // Scroll to bottom
-  scrollToBottom: {
-    position: 'absolute',
-    bottom: 100,
-    right: 16,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: THEME.surface,
-    borderWidth: 1,
-    borderColor: THEME.borderLight,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  // Image Tab
-  imageTabContainer: {
-    flex: 1,
-  },
-  imageScrollContent: {
+  // Create Tab
+  createContent: {
     padding: 16,
     paddingBottom: 120,
   },
-  imageWelcome: {
+  createEmpty: {
     alignItems: 'center',
-    paddingTop: 60,
+    paddingTop: 80,
   },
-  imageWelcomeIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 16,
-    backgroundColor: THEME.surface,
+  createEmptyIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 14,
+    backgroundColor: THEME.orangeLight,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(19, 136, 8, 0.3)',
+    marginBottom: 20,
   },
   imageGrid: {
     gap: 16,
   },
   imageCard: {
-    borderRadius: 16,
+    borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: THEME.surface,
     borderWidth: 1,
-    borderColor: THEME.borderLight,
+    borderColor: THEME.border,
   },
-  genImage: {
+  image: {
     width: '100%',
   },
   imageOverlay: {
@@ -1468,46 +1146,33 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
     padding: 12,
     backgroundColor: 'rgba(0,0,0,0.7)',
   },
-  imagePromptText: {
-    flex: 1,
-    color: THEME.textPrimary,
+  imagePrompt: {
+    color: THEME.text,
     fontSize: 13,
-    marginRight: 12,
-  },
-  downloadBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
 
-  // Settings Panel
-  settingsPanel: {
+  // Image Settings
+  imgSettings: {
     backgroundColor: THEME.surface,
     margin: 16,
     padding: 16,
-    borderRadius: 16,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: THEME.borderLight,
+    borderColor: THEME.border,
   },
-  settingsPanelHeader: {
+  imgSettingsHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 16,
   },
-  settingsPanelTitle: {
+  imgSettingsTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: THEME.textPrimary,
+    color: THEME.text,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
@@ -1523,10 +1188,10 @@ const styles = StyleSheet.create({
   },
   settingValue: {
     fontSize: 13,
-    color: THEME.green,
+    color: THEME.orange,
     fontWeight: '600',
   },
-  sizeSelector: {
+  sizes: {
     flexDirection: 'row',
     gap: 8,
     marginTop: 16,
@@ -1535,14 +1200,14 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 10,
     borderRadius: 8,
-    backgroundColor: THEME.surfaceLight,
+    backgroundColor: THEME.surfaceHover,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: 'transparent',
   },
   sizeBtnActive: {
-    borderColor: THEME.green,
-    backgroundColor: THEME.glowGreen,
+    borderColor: THEME.orange,
+    backgroundColor: THEME.orangeLight,
   },
   sizeBtnText: {
     fontSize: 12,
@@ -1550,13 +1215,13 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   sizeBtnTextActive: {
-    color: THEME.green,
+    color: THEME.orange,
   },
 
   // Modal
-  modalContainer: {
+  modal: {
     flex: 1,
-    backgroundColor: THEME.background,
+    backgroundColor: THEME.noir,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1564,17 +1229,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: THEME.borderLight,
+    borderBottomColor: THEME.border,
   },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '600',
-    color: THEME.textPrimary,
+    color: THEME.text,
   },
   modalClose: {
     width: 36,
     height: 36,
-    borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1585,31 +1249,31 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 16,
-    borderRadius: 12,
+    padding: 14,
+    borderRadius: 10,
     marginBottom: 8,
     backgroundColor: THEME.surface,
     borderWidth: 1,
     borderColor: 'transparent',
   },
   modelItemSelected: {
-    borderColor: THEME.saffron,
-    backgroundColor: THEME.glowSaffron,
+    borderColor: THEME.bleu,
+    backgroundColor: THEME.glowBlue,
   },
   modelInfo: {
     flex: 1,
   },
   modelName: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '500',
-    color: THEME.textPrimary,
-    marginBottom: 4,
+    color: THEME.text,
+    marginBottom: 2,
   },
   modelId: {
-    fontSize: 12,
+    fontSize: 11,
     color: THEME.textMuted,
   },
-  checkMark: {
+  modelCheck: {
     width: 24,
     height: 24,
     borderRadius: 12,
