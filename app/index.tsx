@@ -128,7 +128,7 @@ const getModelMaxTokens = (model?: VeniceModel | null): number | undefined => {
     const val = getConstraintNumber((c as any)[key]);
     if (val && val > 0) return val;
   }
-  return model.model_spec?.availableContextTokens;
+  return undefined;
 };
 
 const extractThinkingBlocks = (text: string): { reasoning: string; content: string } => {
@@ -481,12 +481,33 @@ export default function MainScreen() {
     setIsGenerating(true);
 
     try {
+      const stepsConstraint = model.model_spec?.constraints?.steps;
+      const modelDefaultSteps = getConstraintNumber(stepsConstraint);
+      const modelMaxSteps = typeof stepsConstraint === 'object' && stepsConstraint?.max
+        ? stepsConstraint.max : undefined;
+
+      // Use model default steps if available, otherwise user setting
+      let steps = modelDefaultSteps ?? settings.imageSteps ?? 8;
+      // If user has explicitly changed steps from default, respect their setting (capped to model max)
+      if (settings.imageSteps !== DEFAULT_SETTINGS.imageSteps) {
+        steps = settings.imageSteps;
+      }
+      // Cap to model max steps if available
+      if (modelMaxSteps) {
+        steps = Math.min(steps, modelMaxSteps);
+      }
+      // Force 1 step for nano bananapro models
+      const modelIdLower = model.id.toLowerCase();
+      if (modelIdLower.includes('bananapro') || modelIdLower.includes('nano-banana')) {
+        steps = 1;
+      }
+
       const payload = {
         model: model.id,
         prompt,
         width: settings.imageWidth || 1024,
         height: settings.imageHeight || 1024,
-        steps: Math.min(settings.imageSteps || 8, 8),
+        steps,
         cfg_scale: Math.max(1, Math.min(20, settings.imageGuidanceScale || 7.5)),
         format: 'webp',
         hide_watermark: false,
