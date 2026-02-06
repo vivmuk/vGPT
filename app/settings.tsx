@@ -54,11 +54,11 @@ const getConstraintNumber = (constraint: any): number | undefined => {
 const getModelMaxTokens = (model?: VeniceModel | null): number | undefined => {
   if (!model) return undefined;
   const c = model.model_spec?.constraints || {};
-  for (const key of ['max_output_tokens', 'maxOutputTokens', 'max_tokens']) {
+  for (const key of ['max_output_tokens', 'maxOutputTokens', 'max_tokens', 'response_tokens']) {
     const val = getConstraintNumber((c as any)[key]);
     if (val && val > 0) return val;
   }
-  return model.model_spec?.availableContextTokens;
+  return undefined;
 };
 
 export default function SettingsScreen() {
