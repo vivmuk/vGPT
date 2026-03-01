@@ -17,6 +17,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   imageModel: '',
   imageSteps: 8,
   imageWidth: 1024,
-  imageHeight: 1024,
+  imageHeight: 576,
   imageGuidanceScale: 7.5,
 };
