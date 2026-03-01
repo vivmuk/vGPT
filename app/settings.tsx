@@ -8,7 +8,8 @@ import {
   Alert,
   Modal,
   FlatList,
-  Switch
+  Switch,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -22,26 +23,37 @@ import { loadStoredSettings, persistSettings } from '@/utils/settingsStorage';
 import { VENICE_MODELS_ENDPOINT } from '@/constants/venice';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FRENCH DESIGNER THEME - Matching index.tsx
+// TERMINAL THEME — matches index.tsx
 // ═══════════════════════════════════════════════════════════════════════════
 
-const THEME = {
-  red: '#FF4757',
-  redLight: 'rgba(255, 71, 87, 0.15)',
-  blanc: '#FFFFFF',
-  orange: '#FF7F50',
-  orangeLight: 'rgba(255, 127, 80, 0.15)',
-  noir: '#0C0C0E',
-  surface: '#141416',
-  surfaceHover: '#1C1C1F',
-  text: '#FAFAFA',
-  textSecondary: '#A1A1A6',
-  textMuted: '#636366',
-  textDim: '#48484A',
-  border: 'rgba(255, 255, 255, 0.06)',
-  borderAccent: 'rgba(255, 71, 87, 0.3)',
-  glowRed: 'rgba(255, 71, 87, 0.15)',
+const T = {
+  bg: '#050508',
+  surface: '#0A0A10',
+  surfaceLight: '#111118',
+  surfaceActive: '#1A1A24',
+
+  green: '#00FF88',
+  greenDim: 'rgba(0, 255, 136, 0.6)',
+  greenGlow: 'rgba(0, 255, 136, 0.08)',
+  greenBorder: 'rgba(0, 255, 136, 0.15)',
+
+  cyan: '#00D4FF',
+  cyanBorder: 'rgba(0, 212, 255, 0.15)',
+
+  amber: '#FFB800',
+  amberBorder: 'rgba(255, 184, 0, 0.2)',
+
+  text: '#D4D4D8',
+  textBright: '#FAFAFA',
+  textMuted: '#52525B',
+  textDim: '#3F3F46',
+
+  border: 'rgba(255, 255, 255, 0.04)',
+  white: '#FFFFFF',
+  black: '#000000',
 };
+
+const MONO = Platform.OS === 'ios' ? 'Menlo' : 'monospace';
 
 const getConstraintNumber = (constraint: any): number | undefined => {
   if (constraint == null) return undefined;
@@ -144,61 +156,61 @@ export default function SettingsScreen() {
     step: number,
     key: keyof AppSettings
   ) => (
-    <View style={styles.sliderItem}>
-      <View style={styles.sliderHeader}>
-        <Text style={styles.sliderLabel}>{label}</Text>
-        <Text style={styles.sliderValue}>{value.toFixed(step < 1 ? 2 : 0)}</Text>
+    <View style={s.sliderItem}>
+      <View style={s.sliderHeader}>
+        <Text style={s.sliderLabel}>// {label.toUpperCase()}</Text>
+        <Text style={s.sliderValue}>{value.toFixed(step < 1 ? 2 : 0)}</Text>
       </View>
       <Slider
-        style={styles.slider}
+        style={s.slider}
         minimumValue={min}
         maximumValue={max}
         step={step}
         value={value}
         onValueChange={v => updateSettings({ [key]: v } as any)}
-        minimumTrackTintColor={THEME.red}
-        maximumTrackTintColor={THEME.border}
-        thumbTintColor={THEME.red}
+        minimumTrackTintColor={T.green}
+        maximumTrackTintColor={T.border}
+        thumbTintColor={T.green}
       />
     </View>
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={s.container}>
       <StatusBar style="light" />
 
       {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Feather name="arrow-left" size={20} color={THEME.text} />
+      <View style={s.header}>
+        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
+          <Feather name="arrow-left" size={18} color={T.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Settings</Text>
-        <TouchableOpacity onPress={resetDefaults} style={styles.resetBtn}>
-          <Feather name="refresh-cw" size={18} color={THEME.textSecondary} />
+        <Text style={s.headerTitle}>// CONFIG</Text>
+        <TouchableOpacity onPress={resetDefaults} style={s.resetBtn}>
+          <Feather name="refresh-cw" size={16} color={T.textMuted} />
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
+      <ScrollView style={s.content} contentContainerStyle={s.contentInner}>
         {/* Model Selection */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Model</Text>
-          <TouchableOpacity onPress={() => setShowModels(true)} style={styles.modelBtn}>
-            <Text style={styles.modelBtnText}>{getModelName(settings.model)}</Text>
-            <Feather name="chevron-right" size={18} color={THEME.textSecondary} />
+        <View style={s.section}>
+          <Text style={s.sectionTitle}>// MODEL</Text>
+          <TouchableOpacity onPress={() => setShowModels(true)} style={s.modelBtn}>
+            <Text style={s.modelBtnText}>{getModelName(settings.model)}</Text>
+            <Feather name="chevron-right" size={16} color={T.textMuted} />
           </TouchableOpacity>
         </View>
 
         {/* Web Search */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Web Search</Text>
-          <View style={styles.segmented}>
+        <View style={s.section}>
+          <Text style={s.sectionTitle}>// WEB SEARCH</Text>
+          <View style={s.segmented}>
             {(['off', 'auto', 'on'] as const).map(opt => (
               <TouchableOpacity
                 key={opt}
                 onPress={() => updateSettings({ webSearch: opt })}
-                style={[styles.segment, settings.webSearch === opt && styles.segmentActive]}
+                style={[s.segment, settings.webSearch === opt && s.segmentActive]}
               >
-                <Text style={[styles.segmentText, settings.webSearch === opt && styles.segmentTextActive]}>
+                <Text style={[s.segmentText, settings.webSearch === opt && s.segmentTextActive]}>
                   {opt.toUpperCase()}
                 </Text>
               </TouchableOpacity>
@@ -207,71 +219,71 @@ export default function SettingsScreen() {
         </View>
 
         {/* Capabilities */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Capabilities</Text>
-          <View style={styles.card}>
-            <View style={styles.switchRow}>
-              <Text style={styles.switchLabel}>Venice System Prompt</Text>
+        <View style={s.section}>
+          <Text style={s.sectionTitle}>// CAPABILITIES</Text>
+          <View style={s.card}>
+            <View style={s.switchRow}>
+              <Text style={s.switchLabel}>venice_system_prompt</Text>
               <Switch
                 value={settings.includeVeniceSystemPrompt}
                 onValueChange={v => updateSettings({ includeVeniceSystemPrompt: v })}
-                trackColor={{ false: THEME.border, true: THEME.red }}
-                thumbColor={THEME.blanc}
+                trackColor={{ false: T.border, true: T.green }}
+                thumbColor={T.white}
               />
             </View>
-            <View style={styles.divider} />
-            <View style={styles.switchRow}>
-              <Text style={styles.switchLabel}>Web Citations</Text>
+            <View style={s.divider} />
+            <View style={s.switchRow}>
+              <Text style={s.switchLabel}>web_citations</Text>
               <Switch
                 value={settings.webCitations}
                 onValueChange={v => updateSettings({ webCitations: v })}
-                trackColor={{ false: THEME.border, true: THEME.red }}
-                thumbColor={THEME.blanc}
+                trackColor={{ false: T.border, true: T.green }}
+                thumbColor={T.white}
               />
             </View>
           </View>
         </View>
 
         {/* Parameters */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Parameters</Text>
-          <View style={styles.card}>
+        <View style={s.section}>
+          <Text style={s.sectionTitle}>// PARAMETERS</Text>
+          <View style={s.card}>
             {renderSlider('Temperature', settings.temperature, 0, 2, 0.01, 'temperature')}
             {renderSlider('Top P', settings.topP, 0, 1, 0.01, 'topP')}
             {renderSlider('Min P', settings.minP, 0, 1, 0.01, 'minP')}
             {renderSlider('Max Tokens', settings.maxTokens, 1, maxTokens, 1, 'maxTokens')}
             {renderSlider('Top K', settings.topK, 1, 100, 1, 'topK')}
-            {renderSlider('Repetition Penalty', settings.repetitionPenalty, 1, 2, 0.01, 'repetitionPenalty')}
+            {renderSlider('Rep Penalty', settings.repetitionPenalty, 1, 2, 0.01, 'repetitionPenalty')}
           </View>
         </View>
 
-        {/* Reasoning Models */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Reasoning</Text>
-          <View style={styles.card}>
-            <View style={styles.switchRow}>
+        {/* Reasoning */}
+        <View style={s.section}>
+          <Text style={s.sectionTitle}>// REASONING</Text>
+          <View style={s.card}>
+            <View style={s.switchRow}>
               <View>
-                <Text style={styles.switchLabel}>Strip Thinking</Text>
-                <Text style={styles.switchHint}>Hide model’s reasoning process</Text>
+                <Text style={s.switchLabel}>strip_thinking</Text>
+                <Text style={s.switchHint}>hide reasoning process</Text>
               </View>
               <Switch
                 value={settings.stripThinking}
                 onValueChange={v => updateSettings({ stripThinking: v })}
-                trackColor={{ false: THEME.border, true: THEME.red }}
-                thumbColor={THEME.blanc}
+                trackColor={{ false: T.border, true: T.green }}
+                thumbColor={T.white}
               />
             </View>
-            <View style={styles.divider} />
-            <View style={styles.switchRow}>
+            <View style={s.divider} />
+            <View style={s.switchRow}>
               <View>
-                <Text style={styles.switchLabel}>Disable Thinking</Text>
-                <Text style={styles.switchHint}>Skip reasoning entirely</Text>
+                <Text style={s.switchLabel}>disable_thinking</Text>
+                <Text style={s.switchHint}>skip reasoning entirely</Text>
               </View>
               <Switch
                 value={settings.disableThinking}
                 onValueChange={v => updateSettings({ disableThinking: v })}
-                trackColor={{ false: THEME.border, true: THEME.red }}
-                thumbColor={THEME.blanc}
+                trackColor={{ false: T.border, true: T.green }}
+                thumbColor={T.white}
               />
             </View>
           </View>
@@ -282,33 +294,31 @@ export default function SettingsScreen() {
 
       {/* Model Picker */}
       <Modal visible={showModels} animationType="slide" presentationStyle="formSheet">
-        <View style={styles.modal}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Select Model</Text>
-            <TouchableOpacity onPress={() => setShowModels(false)} style={styles.modalClose}>
-              <Feather name="x" size={24} color={THEME.text} />
+        <View style={s.modal}>
+          <View style={s.modalHeader}>
+            <Text style={s.modalTitle}>// SELECT MODEL</Text>
+            <TouchableOpacity onPress={() => setShowModels(false)} style={s.modalClose}>
+              <Text style={s.modalCloseText}>[x]</Text>
             </TouchableOpacity>
           </View>
           <FlatList
             data={models.filter(m => m.type !== 'image')}
             keyExtractor={m => m.id}
-            contentContainerStyle={styles.modalList}
+            contentContainerStyle={s.modalList}
             renderItem={({ item }) => {
               const selected = settings.model === item.id;
               return (
                 <TouchableOpacity
                   onPress={() => handleModelSelect(item.id)}
-                  style={[styles.modelItem, selected && styles.modelItemSelected]}
+                  style={[s.modelItem, selected && s.modelItemSelected]}
                 >
-                  <View style={styles.modelInfo}>
-                    <Text style={styles.modelName}>{item.model_spec?.name || item.id}</Text>
-                    <Text style={styles.modelId}>{item.id}</Text>
+                  <View style={s.modelInfo}>
+                    <Text style={[s.modelName, selected && { color: T.green }]}>
+                      {selected ? '[*] ' : '[ ] '}
+                      {item.model_spec?.name || item.id}
+                    </Text>
+                    <Text style={s.modelId}>{item.id}</Text>
                   </View>
-                  {selected && (
-                    <View style={styles.modelCheck}>
-                      <Feather name="check" size={16} color={THEME.red} />
-                    </View>
-                  )}
                 </TouchableOpacity>
               );
             }}
@@ -319,10 +329,14 @@ export default function SettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+// ═══════════════════════════════════════════════════════════════════════════
+// STYLES
+// ═══════════════════════════════════════════════════════════════════════════
+
+const s = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: THEME.noir,
+    backgroundColor: T.bg,
   },
 
   // Header
@@ -333,12 +347,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: THEME.border,
+    borderBottomColor: T.greenBorder,
   },
   headerTitle: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: THEME.text,
+    fontFamily: MONO,
+    fontSize: 14,
+    fontWeight: '700',
+    color: T.green,
+    letterSpacing: 1,
   },
   backBtn: {
     width: 36,
@@ -366,21 +382,21 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   sectionTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: THEME.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    fontFamily: MONO,
+    fontSize: 10,
+    fontWeight: '700',
+    color: T.textMuted,
+    letterSpacing: 1,
     marginBottom: 10,
   },
 
   // Card
   card: {
-    backgroundColor: THEME.surface,
-    borderRadius: 12,
+    backgroundColor: T.surface,
+    borderRadius: 6,
     padding: 16,
     borderWidth: 1,
-    borderColor: THEME.border,
+    borderColor: T.border,
   },
 
   // Model Button
@@ -388,43 +404,46 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: THEME.surface,
-    borderRadius: 12,
-    padding: 16,
+    backgroundColor: T.surface,
+    borderRadius: 6,
+    padding: 14,
     borderWidth: 1,
-    borderColor: THEME.border,
+    borderColor: T.greenBorder,
   },
   modelBtnText: {
-    fontSize: 15,
+    fontFamily: MONO,
+    fontSize: 13,
     fontWeight: '500',
-    color: THEME.text,
+    color: T.text,
   },
 
   // Segmented Control
   segmented: {
     flexDirection: 'row',
-    backgroundColor: THEME.surface,
-    borderRadius: 10,
-    padding: 4,
+    backgroundColor: T.surface,
+    borderRadius: 4,
+    padding: 3,
     borderWidth: 1,
-    borderColor: THEME.border,
+    borderColor: T.border,
   },
   segment: {
     flex: 1,
     paddingVertical: 10,
     alignItems: 'center',
-    borderRadius: 8,
+    borderRadius: 3,
   },
   segmentActive: {
-    backgroundColor: THEME.glowRed,
+    backgroundColor: T.greenGlow,
   },
   segmentText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: THEME.textMuted,
+    fontFamily: MONO,
+    fontSize: 11,
+    fontWeight: '700',
+    color: T.textMuted,
+    letterSpacing: 0.5,
   },
   segmentTextActive: {
-    color: THEME.red,
+    color: T.green,
   },
 
   // Switch
@@ -434,37 +453,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   switchLabel: {
-    fontSize: 15,
-    color: THEME.text,
+    fontFamily: MONO,
+    fontSize: 12,
+    color: T.text,
   },
   switchHint: {
-    fontSize: 12,
-    color: THEME.textMuted,
+    fontFamily: MONO,
+    fontSize: 10,
+    color: T.textDim,
     marginTop: 2,
   },
   divider: {
     height: 1,
-    backgroundColor: THEME.border,
+    backgroundColor: T.border,
     marginVertical: 14,
   },
 
   // Slider
   sliderItem: {
-    marginBottom: 18,
+    marginBottom: 16,
   },
   sliderHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   sliderLabel: {
-    fontSize: 14,
-    color: THEME.text,
+    fontFamily: MONO,
+    fontSize: 10,
+    color: T.textMuted,
+    letterSpacing: 0.5,
   },
   sliderValue: {
-    fontSize: 14,
-    color: THEME.red,
-    fontWeight: '600',
+    fontFamily: MONO,
+    fontSize: 12,
+    color: T.green,
+    fontWeight: '700',
   },
   slider: {
     height: 32,
@@ -474,7 +498,7 @@ const styles = StyleSheet.create({
   // Modal
   modal: {
     flex: 1,
-    backgroundColor: THEME.noir,
+    backgroundColor: T.bg,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -482,12 +506,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: THEME.border,
+    borderBottomColor: T.greenBorder,
   },
   modalTitle: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: THEME.text,
+    fontFamily: MONO,
+    fontSize: 14,
+    fontWeight: '700',
+    color: T.green,
+    letterSpacing: 1,
   },
   modalClose: {
     width: 36,
@@ -495,43 +521,41 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  modalCloseText: {
+    fontFamily: MONO,
+    fontSize: 14,
+    color: T.textMuted,
+    fontWeight: '700',
+  },
   modalList: {
     padding: 16,
   },
   modelItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 14,
-    borderRadius: 10,
-    marginBottom: 8,
-    backgroundColor: THEME.surface,
+    padding: 12,
+    borderRadius: 4,
+    marginBottom: 4,
+    backgroundColor: T.surface,
     borderWidth: 1,
     borderColor: 'transparent',
   },
   modelItemSelected: {
-    borderColor: THEME.red,
-    backgroundColor: THEME.glowRed,
+    borderColor: T.greenBorder,
+    backgroundColor: T.greenGlow,
   },
   modelInfo: {
     flex: 1,
   },
   modelName: {
-    fontSize: 14,
+    fontFamily: MONO,
+    fontSize: 12,
     fontWeight: '500',
-    color: THEME.text,
-    marginBottom: 2,
+    color: T.text,
   },
   modelId: {
-    fontSize: 11,
-    color: THEME.textMuted,
-  },
-  modelCheck: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: THEME.surface,
-    justifyContent: 'center',
-    alignItems: 'center',
+    fontFamily: MONO,
+    fontSize: 10,
+    color: T.textDim,
+    marginTop: 3,
+    marginLeft: 24,
   },
 });

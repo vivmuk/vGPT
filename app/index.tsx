@@ -35,45 +35,48 @@ import {
 } from '@/constants/venice';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FRENCH DESIGNER THEME - Subtle, Elegant, Futuristic
-// Inspired by French minimalism with tricolore accents
+// TERMINAL FUTURISTIC THEME
 // ═══════════════════════════════════════════════════════════════════════════
 
-const THEME = {
-  // Primary accents - RED for chat, ORANGE for images
-  red: '#FF4757',            // Vibrant red - chat accent
-  redLight: 'rgba(255, 71, 87, 0.15)',
-  orange: '#FF7F50',         // Coral orange - image/create accent
-  orangeLight: 'rgba(255, 127, 80, 0.15)',
+const T = {
+  bg: '#050508',
+  surface: '#0A0A10',
+  surfaceLight: '#111118',
+  surfaceActive: '#1A1A24',
 
-  // Neutral
-  blanc: '#FFFFFF',          // White
+  green: '#00FF88',
+  greenDim: 'rgba(0, 255, 136, 0.6)',
+  greenGlow: 'rgba(0, 255, 136, 0.08)',
+  greenBorder: 'rgba(0, 255, 136, 0.15)',
 
-  // Dark sophisticated base
-  noir: '#0C0C0E',           // Deep black
-  surface: '#141416',        // Card surface
-  surfaceHover: '#1C1C1F',   // Elevated surface
-  surfaceActive: '#232326',  // Active states
+  cyan: '#00D4FF',
+  cyanDim: 'rgba(0, 212, 255, 0.6)',
+  cyanGlow: 'rgba(0, 212, 255, 0.08)',
+  cyanBorder: 'rgba(0, 212, 255, 0.15)',
 
-  // Text with excellent contrast
-  text: '#FAFAFA',           // Primary text
-  textSecondary: '#A1A1A6',  // Secondary text
-  textMuted: '#636366',      // Muted text
-  textDim: '#48484A',        // Barely visible
+  amber: '#FFB800',
+  amberDim: 'rgba(255, 184, 0, 0.6)',
+  amberGlow: 'rgba(255, 184, 0, 0.08)',
+  amberBorder: 'rgba(255, 184, 0, 0.2)',
 
-  // Borders - ultra subtle
-  border: 'rgba(255, 255, 255, 0.06)',
-  borderLight: 'rgba(255, 255, 255, 0.03)',
-  borderAccent: 'rgba(255, 71, 87, 0.3)',
+  red: '#FF3366',
+  redGlow: 'rgba(255, 51, 102, 0.1)',
 
-  // Glows
-  glowRed: 'rgba(255, 71, 87, 0.15)',
-  glowOrange: 'rgba(255, 127, 80, 0.12)',
+  text: '#D4D4D8',
+  textBright: '#FAFAFA',
+  textMuted: '#52525B',
+  textDim: '#3F3F46',
 
-  // Additional image creation accents
-  orangeBorder: 'rgba(255, 127, 80, 0.4)',
-  orangeGlow: 'rgba(255, 127, 80, 0.2)',
+  border: 'rgba(255, 255, 255, 0.04)',
+  white: '#FFFFFF',
+  black: '#000000',
 };
+
+const MONO = Platform.OS === 'ios' ? 'Menlo' : 'monospace';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TYPES
+// ═══════════════════════════════════════════════════════════════════════════
 
 interface Message {
   role: 'user' | 'assistant';
@@ -100,6 +103,10 @@ interface GeneratedImage {
   width?: number;
   height?: number;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
 
 const isImageModel = (model?: VeniceModel | null): boolean => {
   if (!model) return false;
@@ -162,6 +169,22 @@ const extractThinkingBlocks = (text: string): { reasoning: string; content: stri
   return { reasoning: reasoningParts.join('\n\n').trim(), content };
 };
 
+const getModelBadges = (model: VeniceModel): string[] => {
+  const badges: string[] = [];
+  const caps = model.model_spec?.capabilities || {};
+  const name = model.id.toLowerCase();
+  if (caps.supportsReasoning) badges.push('REASON');
+  if (caps.supportsVision) badges.push('VISION');
+  if (caps.supportsWebSearch) badges.push('WEB');
+  if (name.includes('fast') || name.includes('turbo') || name.includes('nano')) badges.push('FAST');
+  if (name.includes('pro') || name.includes('xl') || name.includes('large')) badges.push('PRO');
+  return badges;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════
+
 const SUGGESTIONS = [
   { icon: 'code', text: 'Write a React hook' },
   { icon: 'edit-3', text: 'Draft a professional email' },
@@ -176,7 +199,27 @@ const IMAGE_SUGGESTIONS = [
   { icon: 'layers', text: 'Abstract geometric art, vibrant colors' },
 ];
 
+const STYLE_PRESETS = [
+  { label: 'NONE', value: '' },
+  { label: 'CINEMA', value: ', cinematic lighting, film grain, dramatic composition, wide angle' },
+  { label: 'ANIME', value: ', anime style, cel shaded, vibrant colors, detailed illustration' },
+  { label: 'PHOTO', value: ', photorealistic, 8k resolution, ultra detailed, DSLR photography' },
+  { label: 'PAINT', value: ', oil painting, thick brushstrokes, classical art, rich textures' },
+  { label: 'NEON', value: ', neon lights, cyberpunk, dark background, glowing edges, futuristic' },
+  { label: 'MINIMAL', value: ', minimalist, clean composition, simple shapes, negative space' },
+];
+
+const ASPECT_RATIOS = [
+  { label: '1:1', w: 1024, h: 1024, boxW: 22, boxH: 22 },
+  { label: '16:9', w: 1024, h: 576, boxW: 26, boxH: 15 },
+  { label: '9:16', w: 576, h: 1024, boxW: 15, boxH: 26 },
+];
+
 const SCREEN_WIDTH = Dimensions.get('window').width;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════
 
 export default function MainScreen() {
   const router = useRouter();
@@ -196,6 +239,13 @@ export default function MainScreen() {
   const [images, setImages] = useState<GeneratedImage[]>([]);
   const [imageSettings, setImageSettings] = useState(false);
   const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
+
+  // New state
+  const [negativePrompt, setNegativePrompt] = useState('');
+  const [selectedStyle, setSelectedStyle] = useState('');
+  const [promptHistory, setPromptHistory] = useState<string[]>([]);
+  const [fullscreenImage, setFullscreenImage] = useState<GeneratedImage | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
 
   // Refs
   const listRef = useRef<FlatList>(null);
@@ -261,7 +311,7 @@ export default function MainScreen() {
     }
   }, [imageModels, settings.imageModel, updateSettings]);
 
-  // Shimmer animation for image generation loading state
+  // Shimmer animation
   useEffect(() => {
     if (isGenerating) {
       Animated.loop(
@@ -456,7 +506,6 @@ export default function MainScreen() {
         content = extracted.content;
       }
 
-      // Final metrics
       const responseTime = (Date.now() - startTimeRef.current) / 1000;
       const inputTokens = usage?.prompt_tokens;
       const outputTokens = usage?.completion_tokens;
@@ -504,8 +553,8 @@ export default function MainScreen() {
   // ═══════════════════════════════════════════════════════════════════════════
 
   const handleGenerate = async () => {
-    const prompt = imagePrompt.trim();
-    if (!prompt || isGenerating) return;
+    const rawPrompt = imagePrompt.trim();
+    if (!rawPrompt || isGenerating) return;
 
     const model = imageModels.find(m => m.id === settings.imageModel);
     if (!model) {
@@ -513,8 +562,17 @@ export default function MainScreen() {
       return;
     }
 
+    // Build final prompt with style preset
+    const prompt = rawPrompt + selectedStyle;
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setIsGenerating(true);
+
+    // Save to prompt history
+    setPromptHistory(prev => {
+      const next = [rawPrompt, ...prev.filter(p => p !== rawPrompt)];
+      return next.slice(0, 20);
+    });
 
     try {
       const stepsConstraint = model.model_spec?.constraints?.steps;
@@ -522,32 +580,35 @@ export default function MainScreen() {
       const modelMaxSteps = typeof stepsConstraint === 'object' && stepsConstraint?.max
         ? stepsConstraint.max : undefined;
 
-      // Use model default steps if available, otherwise user setting
       let steps = modelDefaultSteps ?? settings.imageSteps ?? 8;
-      // If user has explicitly changed steps from default, respect their setting (capped to model max)
       if (settings.imageSteps !== DEFAULT_SETTINGS.imageSteps) {
         steps = settings.imageSteps;
       }
-      // Cap to model max steps if available
       if (modelMaxSteps) {
         steps = Math.min(steps, modelMaxSteps);
       }
-      // Force 1 step for any banana-variant models (nano-banana, bananapro, etc.)
+      // Force 1 step for any banana-variant models
       const modelIdLower = model.id.toLowerCase();
       if (modelIdLower.includes('banana')) {
         steps = 1;
       }
 
-      const payload = {
+      const payload: any = {
         model: model.id,
         prompt,
         width: settings.imageWidth || 1024,
-        height: settings.imageHeight || 1024,
+        height: settings.imageHeight || 576,
         steps,
         cfg_scale: Math.max(1, Math.min(20, settings.imageGuidanceScale || 7.5)),
         format: 'webp',
         hide_watermark: false,
       };
+
+      // Include negative prompt if provided
+      const neg = negativePrompt.trim();
+      if (neg) {
+        payload.negative_prompt = neg;
+      }
 
       const res = await fetch(VENICE_IMAGE_GENERATIONS_ENDPOINT, {
         method: 'POST',
@@ -562,7 +623,7 @@ export default function MainScreen() {
 
       const img: GeneratedImage = {
         id: `${Date.now()}`,
-        prompt,
+        prompt: rawPrompt,
         modelId: model.id,
         createdAt: Date.now(),
         imageData: `data:image/webp;base64,${data.images[0]}`,
@@ -573,7 +634,6 @@ export default function MainScreen() {
       setImages(prev => [img, ...prev]);
       setImagePrompt('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // Scroll to top to reveal newly generated image
       setTimeout(() => imageScrollRef.current?.scrollTo({ y: 0, animated: true }), 100);
     } catch (e: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -593,186 +653,162 @@ export default function MainScreen() {
       if (part.startsWith('```')) {
         const code = part.replace(/^```\w*\n?/, '').replace(/```$/, '');
         return (
-          <View key={i} style={styles.codeBlock}>
+          <View key={i} style={s.codeBlock}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <Text style={styles.codeText}>{code}</Text>
+              <Text style={s.codeText}>{code}</Text>
             </ScrollView>
           </View>
         );
       }
-      return <Text key={i} style={styles.msgText}>{part}</Text>;
+      return <Text key={i} style={s.msgText}>{part}</Text>;
     });
   };
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // LOADING STATE
-  // ═══════════════════════════════════════════════════════════════════════════
+  const accentColor = activeTab === 'chat' ? T.green : T.amber;
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // MAIN RENDER
+  // RENDER
   // ═══════════════════════════════════════════════════════════════════════════
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={s.container} edges={['top', 'bottom']}>
       <StatusBar style="light" />
 
-      {/* Header */}
-      <View style={[styles.header, { paddingTop: Math.max(insets.top, 8) }]}>
-        <View style={styles.headerLeft}>
-          <View style={styles.logoWrapper}>
-            <View style={styles.logoRed} />
-            <View style={styles.logoBlanc} />
-            <View style={styles.logoOrange} />
-          </View>
-          <Text style={styles.logoText}>vGPT</Text>
+      {/* ── HEADER ── */}
+      <View style={[s.header, { paddingTop: Math.max(insets.top, 8) }]}>
+        <View style={s.headerLeft}>
+          <Text style={s.logoText}>{'>_'}</Text>
+          <Text style={s.logoName}>vGPT</Text>
         </View>
 
-        <TouchableOpacity onPress={() => setShowModels(true)} style={styles.modelBtn}>
-          <Text style={styles.modelBtnText} numberOfLines={1}>
+        <TouchableOpacity onPress={() => setShowModels(true)} style={s.modelBtn}>
+          <Text style={s.modelBtnText} numberOfLines={1}>
             {getModelName(activeTab === 'chat' ? settings.model : settings.imageModel)}
           </Text>
           {loadingModels ? (
-            <ActivityIndicator size="small" color={THEME.red} />
+            <ActivityIndicator size="small" color={T.green} />
           ) : (
-            <Feather name="chevron-down" size={14} color={THEME.red} />
+            <Feather name="chevron-down" size={12} color={T.green} />
           )}
         </TouchableOpacity>
 
-        <View style={styles.headerRight}>
+        <View style={s.headerRight}>
           <TouchableOpacity
-            onPress={() => setMessages([])}
-            style={styles.iconBtn}
-            disabled={messages.length === 0}
+            onPress={() => { setMessages([]); setImages([]); }}
+            style={s.iconBtn}
           >
-            <Feather name="trash-2" size={18} color={messages.length ? THEME.textSecondary : THEME.textDim} />
+            <Feather name="trash-2" size={16} color={T.textMuted} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => router.push('/settings')} style={styles.iconBtn}>
-            <Feather name="settings" size={18} color={THEME.textSecondary} />
+          <TouchableOpacity onPress={() => router.push('/settings')} style={s.iconBtn}>
+            <Feather name="settings" size={16} color={T.textMuted} />
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Tabs */}
-      <View style={styles.tabs}>
-        {[
-          { key: 'chat', label: 'Chat', icon: 'message-circle' },
-          { key: 'create', label: 'Create', icon: 'image' },
-        ].map(tab => (
+      {/* ── TABS ── */}
+      <View style={s.tabs}>
+        {([
+          { key: 'chat' as const, label: 'CHAT', color: T.green },
+          { key: 'create' as const, label: 'IMG', color: T.amber },
+        ]).map(tab => (
           <TouchableOpacity
             key={tab.key}
-            onPress={() => setActiveTab(tab.key as any)}
-            style={[styles.tab, activeTab === tab.key && styles.tabActive]}
+            onPress={() => {
+              setActiveTab(tab.key);
+              Haptics.selectionAsync();
+            }}
+            style={[s.tab, activeTab === tab.key && { borderBottomColor: tab.color }]}
           >
-            <Feather
-              name={tab.icon as any}
-              size={15}
-              color={activeTab === tab.key ? (tab.key === 'chat' ? THEME.red : THEME.orange) : THEME.textMuted}
-            />
-            <Text style={[styles.tabLabel, activeTab === tab.key && styles.tabLabelActive]}>
-              {tab.label}
+            <Text style={[
+              s.tabLabel,
+              activeTab === tab.key && { color: tab.color },
+            ]}>
+              [{tab.label}]
             </Text>
           </TouchableOpacity>
         ))}
+        <View style={s.tabFill} />
       </View>
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.flex}
+        style={s.flex}
       >
         {activeTab === 'chat' ? (
-          <View style={styles.flex}>
-            {/* Messages */}
+          /* ══════════ CHAT TAB ══════════ */
+          <View style={s.flex}>
             <FlatList
               ref={listRef}
               data={messages}
               keyExtractor={m => m.id}
-              style={styles.flex}
-              contentContainerStyle={[styles.msgList, messages.length === 0 && styles.msgListEmpty]}
+              style={s.flex}
+              contentContainerStyle={[s.msgList, messages.length === 0 && s.msgListEmpty]}
               onContentSizeChange={() => listRef.current?.scrollToEnd()}
               ListEmptyComponent={
-                <View style={styles.empty}>
-                  <View style={styles.emptyIcon}>
-                    <Feather name="message-circle" size={28} color={THEME.red} />
-                  </View>
-                  <Text style={styles.emptyTitle}>Start a conversation</Text>
-                  <Text style={styles.emptySub}>Ask anything or try a suggestion</Text>
+                <View style={s.empty}>
+                  <Text style={s.emptyTerminal}>SYSTEM READY</Text>
+                  <Text style={s.emptySub}>query something or select a prompt</Text>
 
-                  <View style={styles.suggestions}>
-                    {SUGGESTIONS.map((s, i) => (
+                  <View style={s.suggestions}>
+                    {SUGGESTIONS.map((sg, i) => (
                       <TouchableOpacity
                         key={i}
-                        style={styles.suggestion}
-                        onPress={() => setInput(s.text)}
+                        style={s.suggestion}
+                        onPress={() => { setInput(sg.text); Haptics.selectionAsync(); }}
                       >
-                        <Feather name={s.icon as any} size={14} color={THEME.orange} />
-                        <Text style={styles.suggestionText}>{s.text}</Text>
+                        <Text style={s.suggestionArrow}>{'>'}</Text>
+                        <Text style={s.suggestionText}>{sg.text}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
                 </View>
               }
               renderItem={({ item }) => (
-                <View style={[styles.msgRow, item.role === 'assistant' && styles.msgRowAi]}>
-                  <View style={[styles.avatar, item.role === 'user' ? styles.avatarUser : styles.avatarAi]}>
-                    <Feather
-                      name={item.role === 'user' ? 'user' : 'cpu'}
-                      size={12}
-                      color={item.role === 'user' ? THEME.noir : THEME.red}
-                    />
-                  </View>
-                  <View style={styles.msgBody}>
-                    <Text style={styles.msgRole}>{item.role === 'user' ? 'You' : 'AI'}</Text>
+                <View style={[s.msgRow, item.role === 'assistant' && s.msgRowAi]}>
+                  <Text style={[s.msgPrefix, { color: item.role === 'user' ? T.cyan : T.green }]}>
+                    {item.role === 'user' ? '$' : '>'}
+                  </Text>
+                  <View style={s.msgBody}>
                     {item.isStreaming && !item.content ? (
-                      <View style={styles.typing}>
-                        <View style={[styles.typingDot, styles.typingDot1]} />
-                        <View style={[styles.typingDot, styles.typingDot2]} />
-                        <View style={[styles.typingDot, styles.typingDot3]} />
-                      </View>
+                      <Text style={s.msgStreaming}>processing...</Text>
                     ) : (
                       renderCode(item.content)
                     )}
                     {!settings.stripThinking && item.role === 'assistant' && item.reasoning?.trim() && (
-                      <View style={styles.reasoning}>
-                        <TouchableOpacity style={styles.reasoningHeader} onPress={() => toggleReasoning(item.id)}>
-                          <Feather
-                            name={expandedReasoning[item.id] ? 'chevron-down' : 'chevron-right'}
-                            size={14}
-                            color={THEME.textSecondary}
-                          />
-                          <Text style={styles.reasoningTitle}>Reasoning</Text>
+                      <View style={s.reasoning}>
+                        <TouchableOpacity style={s.reasoningHeader} onPress={() => toggleReasoning(item.id)}>
+                          <Text style={s.reasoningToggle}>
+                            {expandedReasoning[item.id] ? '[-]' : '[+]'}
+                          </Text>
+                          <Text style={s.reasoningTitle}>reasoning</Text>
                         </TouchableOpacity>
                         {expandedReasoning[item.id] && (
-                          <View style={styles.reasoningBody}>
-                            {renderCode(item.reasoning)}
+                          <View style={s.reasoningBody}>
+                            {renderCode(item.reasoning || '')}
                           </View>
                         )}
                       </View>
                     )}
                     {item.metrics && !item.isStreaming && (
-                      <View style={styles.metrics}>
-                        <Text style={styles.metric}>{item.metrics.tokensPerSecond} tok/s</Text>
-                        <Text style={styles.metricDot}>·</Text>
-                        <Text style={styles.metric}>{item.metrics.totalTokens} tokens</Text>
-                        {item.metrics.cost && (
-                          <>
-                            <Text style={styles.metricDot}>·</Text>
-                            <Text style={styles.metric}>${item.metrics.cost.toFixed(4)}</Text>
-                          </>
-                        )}
-                      </View>
+                      <Text style={s.metrics}>
+                        {'// '}{item.metrics.tokensPerSecond} tok/s
+                        {' · '}{item.metrics.totalTokens} tokens
+                        {item.metrics.cost ? ` · $${item.metrics.cost.toFixed(4)}` : ''}
+                      </Text>
                     )}
                   </View>
                 </View>
               )}
             />
 
-            {/* Composer */}
-            <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-              <View style={styles.composerInner}>
+            {/* Chat Composer */}
+            <View style={[s.composer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+              <View style={s.composerInner}>
+                <Text style={s.composerPrefix}>{'>_'}</Text>
                 <TextInput
-                  style={styles.input}
-                  placeholder="Ask anything..."
-                  placeholderTextColor={THEME.textMuted}
+                  style={s.input}
+                  placeholder="query..."
+                  placeholderTextColor={T.textDim}
                   value={input}
                   onChangeText={setInput}
                   multiline
@@ -782,153 +818,146 @@ export default function MainScreen() {
                 <TouchableOpacity
                   onPress={handleSend}
                   disabled={!input.trim() || isLoading}
-                  style={[styles.sendBtn, (!input.trim() || isLoading) && styles.sendBtnDisabled]}
+                  style={[s.sendBtn, (!input.trim() || isLoading) && s.sendBtnDisabled]}
                 >
                   {isLoading ? (
-                    <ActivityIndicator size="small" color={THEME.noir} />
+                    <ActivityIndicator size="small" color={T.bg} />
                   ) : (
-                    <Feather name="arrow-up" size={18} color={THEME.noir} />
+                    <Feather name="arrow-up" size={16} color={T.bg} />
                   )}
                 </TouchableOpacity>
               </View>
             </View>
           </View>
         ) : (
-          /* CREATE TAB */
-          <View style={styles.flex}>
+          /* ══════════ CREATE TAB ══════════ */
+          <View style={s.flex}>
             <ScrollView
               ref={imageScrollRef}
-              style={styles.flex}
-              contentContainerStyle={styles.createContent}
+              style={s.flex}
+              contentContainerStyle={s.createContent}
               showsVerticalScrollIndicator={false}
             >
-              {/* Generating shimmer card */}
+              {/* Style Presets */}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.presetsScroll} contentContainerStyle={s.presetsRow}>
+                {STYLE_PRESETS.map(preset => {
+                  const active = selectedStyle === preset.value;
+                  return (
+                    <TouchableOpacity
+                      key={preset.label}
+                      onPress={() => {
+                        setSelectedStyle(active ? '' : preset.value);
+                        Haptics.selectionAsync();
+                      }}
+                      style={[s.presetChip, active && s.presetChipActive]}
+                    >
+                      <Text style={[s.presetText, active && s.presetTextActive]}>{preset.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              {/* Generating State */}
               {isGenerating && (
-                <Animated.View style={[styles.imageCard, styles.generatingCard, { opacity: shimmerAnim }]}>
-                  <View style={styles.generatingContent}>
-                    <View style={styles.generatingIconRing}>
-                      <Feather name="zap" size={26} color={THEME.orange} />
-                    </View>
-                    <Text style={styles.generatingLabel}>Creating your image…</Text>
-                    <Text style={styles.generatingPrompt} numberOfLines={2}>{imagePrompt}</Text>
+                <Animated.View style={[s.genCard, { opacity: shimmerAnim }]}>
+                  <View style={s.genCardInner}>
+                    <ActivityIndicator size="small" color={T.amber} />
+                    <Text style={s.genCardLabel}>RENDERING...</Text>
+                    <Text style={s.genCardPrompt} numberOfLines={2}>{imagePrompt}</Text>
                   </View>
                 </Animated.View>
               )}
 
+              {/* Image Gallery or Empty State */}
               {images.length === 0 && !isGenerating ? (
-                <View style={styles.createEmpty}>
-                  {/* Decorative icon cluster */}
-                  <View style={styles.createHeroWrapper}>
-                    <View style={styles.createHeroBg} />
-                    <View style={styles.createHeroIcon}>
-                      <Feather name="image" size={32} color={THEME.orange} />
-                    </View>
-                    <View style={styles.createHeroDot1} />
-                    <View style={styles.createHeroDot2} />
-                    <View style={styles.createHeroDot3} />
-                  </View>
-                  <Text style={styles.emptyTitle}>Generate images</Text>
-                  <Text style={styles.emptySub}>Describe any scene, style, or idea</Text>
+                <View style={s.createEmpty}>
+                  <Text style={s.emptyTerminal}>IMG GENERATOR</Text>
+                  <Text style={s.emptySub}>describe a scene to render</Text>
 
-                  {/* Example prompts */}
-                  <View style={styles.imageSuggestions}>
-                    {IMAGE_SUGGESTIONS.map((s, i) => (
+                  <View style={s.suggestions}>
+                    {IMAGE_SUGGESTIONS.map((sg, i) => (
                       <TouchableOpacity
                         key={i}
-                        style={styles.imageSuggestion}
-                        onPress={() => {
-                          setImagePrompt(s.text);
-                          Haptics.selectionAsync();
-                        }}
+                        style={s.suggestion}
+                        onPress={() => { setImagePrompt(sg.text); Haptics.selectionAsync(); }}
                       >
-                        <Feather name={s.icon as any} size={13} color={THEME.orange} />
-                        <Text style={styles.imageSuggestionText} numberOfLines={1}>{s.text}</Text>
+                        <Text style={[s.suggestionArrow, { color: T.amber }]}>{'>'}</Text>
+                        <Text style={s.suggestionText}>{sg.text}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
                 </View>
               ) : (
-                <View style={styles.imageGrid}>
+                <View style={s.imageGrid}>
                   {images.map(img => (
-                    <View key={img.id} style={styles.imageCard}>
-                      <Image
-                        source={{ uri: img.imageData }}
-                        style={[styles.image, { aspectRatio: (img.width || 16) / (img.height || 9) }]}
-                        contentFit="cover"
-                      />
-                      {/* Gradient-simulated overlay */}
-                      <View style={styles.imageOverlay}>
-                        <View style={styles.imageOverlayTop} />
-                        <View style={styles.imageOverlayBottom}>
-                          <Text style={styles.imagePrompt} numberOfLines={2}>{img.prompt}</Text>
-                          <View style={styles.imageActions}>
-                            <TouchableOpacity
-                              onPress={() => downloadImage(img)}
-                              style={styles.imageActionBtn}
-                              accessibilityLabel="Share image"
-                            >
-                              <Feather name="share" size={15} color={THEME.blanc} />
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              onPress={() => downloadImage(img)}
-                              style={styles.imageActionBtn}
-                              accessibilityLabel="Download image"
-                            >
-                              <Feather name="download" size={15} color={THEME.blanc} />
-                            </TouchableOpacity>
-                          </View>
+                    <TouchableOpacity
+                      key={img.id}
+                      style={s.imageCard}
+                      onPress={() => setFullscreenImage(img)}
+                      activeOpacity={0.85}
+                    >
+                      <View style={s.imageFrame}>
+                        <Image
+                          source={{ uri: img.imageData }}
+                          style={[s.image, { aspectRatio: (img.width || 16) / (img.height || 9) }]}
+                          contentFit="contain"
+                        />
+                      </View>
+                      <View style={s.imageInfo}>
+                        <Text style={s.imagePromptText} numberOfLines={2}>{img.prompt}</Text>
+                        <View style={s.imageActions}>
+                          <TouchableOpacity onPress={() => downloadImage(img)} style={s.imageActionBtn}>
+                            <Feather name="share" size={14} color={T.text} />
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={() => downloadImage(img)} style={s.imageActionBtn}>
+                            <Feather name="download" size={14} color={T.text} />
+                          </TouchableOpacity>
                         </View>
                       </View>
-                    </View>
+                    </TouchableOpacity>
                   ))}
                 </View>
               )}
 
-              {/* Image Settings Panel */}
+              {/* Settings Panel */}
               {imageSettings && (
-                <View style={styles.imgSettings}>
-                  <View style={styles.imgSettingsHeader}>
-                    <View style={styles.imgSettingsTitleRow}>
-                      <Feather name="sliders" size={14} color={THEME.orange} />
-                      <Text style={styles.imgSettingsTitle}>Generation Settings</Text>
-                    </View>
-                    <TouchableOpacity onPress={() => setImageSettings(false)} style={styles.imgSettingsClose}>
-                      <Feather name="x" size={16} color={THEME.textSecondary} />
+                <View style={s.imgPanel}>
+                  <View style={s.imgPanelHeader}>
+                    <Text style={s.imgPanelTitle}>// SETTINGS</Text>
+                    <TouchableOpacity onPress={() => setImageSettings(false)}>
+                      <Text style={s.imgPanelClose}>[x]</Text>
                     </TouchableOpacity>
                   </View>
 
-                  {/* Aspect Ratio - visual ratio icons */}
-                  <Text style={styles.settingLabel}>Aspect Ratio</Text>
-                  <View style={styles.ratioRow}>
-                    {[
-                      { label: '1:1', w: 1024, h: 1024, boxW: 28, boxH: 28 },
-                      { label: '9:16', w: 576, h: 1024, boxW: 20, boxH: 28 },
-                      { label: '16:9', w: 1024, h: 576, boxW: 28, boxH: 17 },
-                    ].map(s => {
-                      const active = settings.imageWidth === s.w && settings.imageHeight === s.h;
+                  {/* Aspect Ratio */}
+                  <Text style={s.panelLabel}>// RATIO</Text>
+                  <View style={s.ratioRow}>
+                    {ASPECT_RATIOS.map(r => {
+                      const active = settings.imageWidth === r.w && settings.imageHeight === r.h;
                       return (
                         <TouchableOpacity
-                          key={s.label}
+                          key={r.label}
                           onPress={() => {
-                            updateSettings({ imageWidth: s.w, imageHeight: s.h });
+                            updateSettings({ imageWidth: r.w, imageHeight: r.h });
                             Haptics.selectionAsync();
                           }}
-                          style={[styles.ratioBtn, active && styles.ratioBtnActive]}
+                          style={[s.ratioBtn, active && s.ratioBtnActive]}
                         >
                           <View style={[
-                            styles.ratioIcon,
-                            { width: s.boxW, height: s.boxH },
-                            active && styles.ratioIconActive,
+                            s.ratioIcon,
+                            { width: r.boxW, height: r.boxH },
+                            active && s.ratioIconActive,
                           ]} />
-                          <Text style={[styles.ratioBtnText, active && styles.ratioBtnTextActive]}>{s.label}</Text>
+                          <Text style={[s.ratioText, active && s.ratioTextActive]}>{r.label}</Text>
                         </TouchableOpacity>
                       );
                     })}
                   </View>
 
-                  <View style={styles.settingRow}>
-                    <Text style={styles.settingLabel}>Steps</Text>
-                    <Text style={styles.settingValue}>{settings.imageSteps || 8}</Text>
+                  {/* Steps */}
+                  <View style={s.sliderRow}>
+                    <Text style={s.panelLabel}>// STEPS</Text>
+                    <Text style={s.panelValue}>{settings.imageSteps || 8}</Text>
                   </View>
                   <Slider
                     value={settings.imageSteps || 8}
@@ -936,14 +965,15 @@ export default function MainScreen() {
                     maximumValue={8}
                     step={1}
                     onValueChange={v => updateSettings({ imageSteps: v })}
-                    minimumTrackTintColor={THEME.orange}
-                    maximumTrackTintColor={THEME.border}
-                    thumbTintColor={THEME.orange}
+                    minimumTrackTintColor={T.amber}
+                    maximumTrackTintColor={T.border}
+                    thumbTintColor={T.amber}
                   />
 
-                  <View style={styles.settingRow}>
-                    <Text style={styles.settingLabel}>Guidance</Text>
-                    <Text style={styles.settingValue}>{(settings.imageGuidanceScale || 7.5).toFixed(1)}</Text>
+                  {/* Guidance */}
+                  <View style={s.sliderRow}>
+                    <Text style={s.panelLabel}>// GUIDANCE</Text>
+                    <Text style={s.panelValue}>{(settings.imageGuidanceScale || 7.5).toFixed(1)}</Text>
                   </View>
                   <Slider
                     value={settings.imageGuidanceScale || 7.5}
@@ -951,30 +981,66 @@ export default function MainScreen() {
                     maximumValue={20}
                     step={0.5}
                     onValueChange={v => updateSettings({ imageGuidanceScale: v })}
-                    minimumTrackTintColor={THEME.orange}
-                    maximumTrackTintColor={THEME.border}
-                    thumbTintColor={THEME.orange}
+                    minimumTrackTintColor={T.amber}
+                    maximumTrackTintColor={T.border}
+                    thumbTintColor={T.amber}
                   />
+
+                  {/* Negative Prompt */}
+                  <Text style={s.panelLabel}>// NEGATIVE PROMPT</Text>
+                  <TextInput
+                    style={s.negInput}
+                    placeholder="exclude elements..."
+                    placeholderTextColor={T.textDim}
+                    value={negativePrompt}
+                    onChangeText={setNegativePrompt}
+                    multiline
+                  />
+                </View>
+              )}
+
+              {/* Prompt History */}
+              {showHistory && promptHistory.length > 0 && (
+                <View style={s.historyPanel}>
+                  <Text style={s.imgPanelTitle}>// RECENT</Text>
+                  {promptHistory.slice(0, 8).map((p, i) => (
+                    <TouchableOpacity
+                      key={i}
+                      style={s.historyItem}
+                      onPress={() => {
+                        setImagePrompt(p);
+                        setShowHistory(false);
+                        Haptics.selectionAsync();
+                      }}
+                    >
+                      <Text style={s.historyText} numberOfLines={1}>{p}</Text>
+                    </TouchableOpacity>
+                  ))}
                 </View>
               )}
             </ScrollView>
 
             {/* Image Composer */}
-            <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-              <View style={styles.composerInner}>
+            <View style={[s.composer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+              <View style={s.composerInner}>
                 <TouchableOpacity
-                  onPress={() => {
-                    setImageSettings(!imageSettings);
-                    Haptics.selectionAsync();
-                  }}
-                  style={[styles.settingsToggle, imageSettings && styles.settingsToggleActive]}
+                  onPress={() => { setImageSettings(!imageSettings); Haptics.selectionAsync(); }}
+                  style={[s.compBtn, imageSettings && s.compBtnActive]}
                 >
-                  <Feather name="sliders" size={18} color={imageSettings ? THEME.orange : THEME.textMuted} />
+                  <Feather name="sliders" size={16} color={imageSettings ? T.amber : T.textMuted} />
                 </TouchableOpacity>
+                {promptHistory.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => { setShowHistory(!showHistory); Haptics.selectionAsync(); }}
+                    style={[s.compBtn, showHistory && s.compBtnActive]}
+                  >
+                    <Feather name="clock" size={16} color={showHistory ? T.amber : T.textMuted} />
+                  </TouchableOpacity>
+                )}
                 <TextInput
-                  style={styles.input}
-                  placeholder="Describe an image…"
-                  placeholderTextColor={THEME.textMuted}
+                  style={s.input}
+                  placeholder="describe an image..."
+                  placeholderTextColor={T.textDim}
                   value={imagePrompt}
                   onChangeText={setImagePrompt}
                   multiline
@@ -983,12 +1049,12 @@ export default function MainScreen() {
                 <TouchableOpacity
                   onPress={handleGenerate}
                   disabled={!imagePrompt.trim() || isGenerating}
-                  style={[styles.sendBtnOrange, (!imagePrompt.trim() || isGenerating) && styles.sendBtnDisabled]}
+                  style={[s.sendBtnAmber, (!imagePrompt.trim() || isGenerating) && s.sendBtnDisabled]}
                 >
                   {isGenerating ? (
-                    <ActivityIndicator size="small" color={THEME.noir} />
+                    <ActivityIndicator size="small" color={T.bg} />
                   ) : (
-                    <Feather name="zap" size={18} color={THEME.noir} />
+                    <Feather name="zap" size={16} color={T.bg} />
                   )}
                 </TouchableOpacity>
               </View>
@@ -997,21 +1063,55 @@ export default function MainScreen() {
         )}
       </KeyboardAvoidingView>
 
-      {/* Model Picker Modal */}
+      {/* ══════════ FULLSCREEN IMAGE VIEWER ══════════ */}
+      <Modal visible={!!fullscreenImage} animationType="fade" statusBarTranslucent>
+        <View style={s.viewer}>
+          <View style={s.viewerHeader}>
+            <TouchableOpacity onPress={() => setFullscreenImage(null)} style={s.viewerClose}>
+              <Feather name="x" size={22} color={T.text} />
+            </TouchableOpacity>
+          </View>
+          {fullscreenImage && (
+            <>
+              <View style={s.viewerImageWrap}>
+                <Image
+                  source={{ uri: fullscreenImage.imageData }}
+                  style={s.viewerImage}
+                  contentFit="contain"
+                />
+              </View>
+              <View style={[s.viewerBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+                <Text style={s.viewerPrompt} numberOfLines={3}>{fullscreenImage.prompt}</Text>
+                <View style={s.viewerActions}>
+                  <TouchableOpacity onPress={() => fullscreenImage && downloadImage(fullscreenImage)} style={s.viewerBtn}>
+                    <Feather name="share" size={18} color={T.text} />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => fullscreenImage && downloadImage(fullscreenImage)} style={s.viewerBtn}>
+                    <Feather name="download" size={18} color={T.text} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </>
+          )}
+        </View>
+      </Modal>
+
+      {/* ══════════ MODEL PICKER ══════════ */}
       <Modal visible={showModels} animationType="slide" presentationStyle="formSheet">
-        <View style={styles.modal}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Select Model</Text>
-            <TouchableOpacity onPress={() => setShowModels(false)} style={styles.modalClose}>
-              <Feather name="x" size={24} color={THEME.text} />
+        <View style={s.modal}>
+          <View style={s.modalHeader}>
+            <Text style={s.modalTitle}>// SELECT MODEL</Text>
+            <TouchableOpacity onPress={() => setShowModels(false)} style={s.modalClose}>
+              <Text style={s.modalCloseText}>[x]</Text>
             </TouchableOpacity>
           </View>
           <FlatList
             data={activeTab === 'chat' ? textModels : imageModels}
             keyExtractor={m => m.id}
-            contentContainerStyle={styles.modalList}
+            contentContainerStyle={s.modalList}
             renderItem={({ item }) => {
               const selected = (activeTab === 'chat' ? settings.model : settings.imageModel) === item.id;
+              const badges = getModelBadges(item);
               return (
                 <TouchableOpacity
                   onPress={() => {
@@ -1021,18 +1121,30 @@ export default function MainScreen() {
                       updateSettings({ imageModel: item.id });
                     }
                     setShowModels(false);
+                    Haptics.selectionAsync();
                   }}
-                  style={[styles.modelItem, selected && styles.modelItemSelected]}
+                  style={[s.modelItem, selected && s.modelItemSelected]}
                 >
-                  <View style={styles.modelInfo}>
-                    <Text style={styles.modelName}>{item.model_spec?.name || item.id}</Text>
-                    <Text style={styles.modelId}>{item.id}</Text>
-                  </View>
-                  {selected && (
-                    <View style={styles.modelCheck}>
-                      <Feather name="check" size={16} color={THEME.red} />
+                  <View style={s.modelInfo}>
+                    <View style={s.modelNameRow}>
+                      <Text style={[s.modelName, selected && { color: T.green }]}>
+                        {selected ? '[*] ' : '[ ] '}
+                        {item.model_spec?.name || item.id}
+                      </Text>
                     </View>
-                  )}
+                    <View style={s.modelMeta}>
+                      <Text style={s.modelId}>{item.id}</Text>
+                      {badges.length > 0 && (
+                        <View style={s.badgeRow}>
+                          {badges.map(b => (
+                            <View key={b} style={s.badge}>
+                              <Text style={s.badgeText}>{b}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+                    </View>
+                  </View>
                 </TouchableOpacity>
               );
             }}
@@ -1047,38 +1159,9 @@ export default function MainScreen() {
 // STYLES
 // ═══════════════════════════════════════════════════════════════════════════
 
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   flex: { flex: 1 },
-  container: { flex: 1, backgroundColor: THEME.noir },
-
-  // Loading
-  loadingScreen: {
-    flex: 1,
-    backgroundColor: THEME.noir,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingPulse: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: THEME.surface,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  loadingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: THEME.red,
-  },
-  loadingText: {
-    color: THEME.textMuted,
-    fontSize: 13,
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-  },
+  container: { flex: 1, backgroundColor: T.bg },
 
   // Header
   header: {
@@ -1086,56 +1169,55 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingBottom: 12,
+    paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: THEME.border,
+    borderBottomColor: T.greenBorder,
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 6,
   },
-  logoWrapper: {
-    width: 20,
-    height: 20,
-    flexDirection: 'row',
-    gap: 2,
-  },
-  logoRed: { flex: 1, backgroundColor: THEME.red, borderRadius: 2 },
-  logoBlanc: { flex: 1, backgroundColor: THEME.blanc, borderRadius: 2 },
-  logoOrange: { flex: 1, backgroundColor: THEME.orange, borderRadius: 2 },
   logoText: {
-    fontSize: 17,
+    fontFamily: MONO,
+    fontSize: 16,
     fontWeight: '700',
-    color: THEME.text,
-    letterSpacing: -0.3,
+    color: T.green,
+  },
+  logoName: {
+    fontFamily: MONO,
+    fontSize: 16,
+    fontWeight: '700',
+    color: T.text,
+    letterSpacing: 1,
   },
   headerRight: {
     flexDirection: 'row',
-    gap: 4,
+    gap: 2,
   },
   iconBtn: {
     width: 36,
     height: 36,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 8,
+    borderRadius: 6,
   },
   modelBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: THEME.surface,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
+    backgroundColor: T.surface,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 4,
     gap: 6,
-    maxWidth: 160,
+    maxWidth: 180,
     borderWidth: 1,
-    borderColor: THEME.borderAccent,
+    borderColor: T.greenBorder,
   },
   modelBtnText: {
-    color: THEME.text,
-    fontSize: 13,
+    fontFamily: MONO,
+    color: T.text,
+    fontSize: 11,
     fontWeight: '500',
   },
 
@@ -1143,27 +1225,24 @@ const styles = StyleSheet.create({
   tabs: {
     flexDirection: 'row',
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: T.border,
   },
   tab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8,
-    gap: 6,
-  },
-  tabActive: {
-    backgroundColor: THEME.glowRed,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
   },
   tabLabel: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: THEME.textMuted,
+    fontFamily: MONO,
+    fontSize: 12,
+    fontWeight: '600',
+    color: T.textMuted,
+    letterSpacing: 1,
   },
-  tabLabelActive: {
-    color: THEME.red,
+  tabFill: {
+    flex: 1,
   },
 
   // Empty / Welcome
@@ -1173,50 +1252,52 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 32,
   },
-  emptyIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 14,
-    backgroundColor: THEME.glowRed,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: THEME.text,
-    marginBottom: 6,
+  emptyTerminal: {
+    fontFamily: MONO,
+    fontSize: 18,
+    fontWeight: '700',
+    color: T.green,
+    letterSpacing: 2,
+    marginBottom: 8,
   },
   emptySub: {
-    fontSize: 14,
-    color: THEME.textSecondary,
-    marginBottom: 28,
+    fontFamily: MONO,
+    fontSize: 12,
+    color: T.textMuted,
+    marginBottom: 32,
   },
   suggestions: {
     width: '100%',
     maxWidth: 360,
-    gap: 8,
+    gap: 6,
   },
   suggestion: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: THEME.surface,
     paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 10,
+    paddingVertical: 11,
+    borderRadius: 4,
     gap: 10,
+    backgroundColor: T.surface,
     borderWidth: 1,
-    borderColor: THEME.border,
+    borderColor: T.border,
+  },
+  suggestionArrow: {
+    fontFamily: MONO,
+    fontSize: 14,
+    color: T.green,
+    fontWeight: '700',
   },
   suggestionText: {
-    color: THEME.text,
-    fontSize: 14,
+    fontFamily: MONO,
+    color: T.text,
+    fontSize: 12,
+    flex: 1,
   },
 
   // Messages
   msgList: {
-    paddingVertical: 8,
+    paddingVertical: 4,
   },
   msgListEmpty: {
     flex: 1,
@@ -1224,92 +1305,63 @@ const styles = StyleSheet.create({
   msgRow: {
     flexDirection: 'row',
     paddingHorizontal: 16,
-    paddingVertical: 14,
-    gap: 12,
+    paddingVertical: 12,
+    gap: 10,
   },
   msgRowAi: {
-    backgroundColor: THEME.surface,
+    backgroundColor: T.surface,
+    borderLeftWidth: 2,
+    borderLeftColor: T.greenBorder,
   },
-  avatar: {
-    width: 26,
-    height: 26,
-    borderRadius: 7,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarUser: {
-    backgroundColor: THEME.blanc,
-  },
-  avatarAi: {
-    backgroundColor: THEME.glowRed,
-    borderWidth: 1,
-    borderColor: THEME.borderAccent,
+  msgPrefix: {
+    fontFamily: MONO,
+    fontSize: 14,
+    fontWeight: '700',
+    paddingTop: 1,
   },
   msgBody: {
     flex: 1,
   },
-  msgRole: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: THEME.textMuted,
-    marginBottom: 4,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
   msgText: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: THEME.text,
+    fontSize: 14,
+    lineHeight: 21,
+    color: T.text,
   },
-  typing: {
-    flexDirection: 'row',
-    gap: 4,
-    paddingVertical: 8,
+  msgStreaming: {
+    fontFamily: MONO,
+    fontSize: 12,
+    color: T.greenDim,
+    fontStyle: 'italic',
   },
-  typingDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: THEME.red,
-  },
-  typingDot1: { opacity: 0.3 },
-  typingDot2: { opacity: 0.6 },
-  typingDot3: { opacity: 1 },
   metrics: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 10,
-    gap: 6,
-  },
-  metric: {
-    fontSize: 11,
-    color: THEME.textMuted,
-  },
-  metricDot: {
-    color: THEME.textDim,
-    fontSize: 11,
+    fontFamily: MONO,
+    fontSize: 10,
+    color: T.textMuted,
+    marginTop: 8,
   },
 
   // Code
   codeBlock: {
-    backgroundColor: '#0a0a0c',
-    borderRadius: 8,
+    backgroundColor: '#08080C',
+    borderRadius: 4,
     padding: 12,
-    marginVertical: 8,
+    marginVertical: 6,
     borderWidth: 1,
-    borderColor: THEME.border,
+    borderColor: T.greenBorder,
   },
   codeText: {
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    fontSize: 13,
-    color: THEME.text,
-    lineHeight: 20,
+    fontFamily: MONO,
+    fontSize: 12,
+    color: T.green,
+    lineHeight: 18,
   },
+
+  // Reasoning
   reasoning: {
     marginTop: 10,
     borderWidth: 1,
-    borderColor: THEME.border,
-    borderRadius: 10,
+    borderColor: T.border,
+    borderRadius: 4,
     overflow: 'hidden',
   },
   reasoningHeader: {
@@ -1318,70 +1370,88 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    backgroundColor: THEME.surfaceHover,
+    backgroundColor: T.surfaceLight,
+  },
+  reasoningToggle: {
+    fontFamily: MONO,
+    fontSize: 11,
+    color: T.cyan,
+    fontWeight: '700',
   },
   reasoningTitle: {
-    fontSize: 12,
-    color: THEME.textSecondary,
-    fontWeight: '600',
-    letterSpacing: 0.2,
+    fontFamily: MONO,
+    fontSize: 11,
+    color: T.textMuted,
+    letterSpacing: 0.5,
   },
   reasoningBody: {
     paddingHorizontal: 10,
     paddingVertical: 8,
-    backgroundColor: THEME.surface,
+    backgroundColor: T.surface,
   },
 
   // Composer
   composer: {
     paddingHorizontal: 16,
     paddingTop: 8,
-    backgroundColor: THEME.noir,
+    backgroundColor: T.bg,
     borderTopWidth: 1,
-    borderTopColor: THEME.border,
+    borderTopColor: T.border,
   },
   composerInner: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    backgroundColor: THEME.surface,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    backgroundColor: T.surface,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     gap: 8,
     borderWidth: 1,
-    borderColor: THEME.border,
+    borderColor: T.greenBorder,
+  },
+  composerPrefix: {
+    fontFamily: MONO,
+    fontSize: 14,
+    fontWeight: '700',
+    color: T.green,
+    paddingBottom: 6,
   },
   input: {
     flex: 1,
-    color: THEME.text,
-    fontSize: 15,
+    fontFamily: MONO,
+    color: T.text,
+    fontSize: 13,
     maxHeight: 100,
-    paddingVertical: 6,
+    paddingVertical: 4,
   },
   sendBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 9,
-    backgroundColor: THEME.red,
+    width: 32,
+    height: 32,
+    borderRadius: 4,
+    backgroundColor: T.green,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  sendBtnOrange: {
-    width: 34,
-    height: 34,
-    borderRadius: 9,
-    backgroundColor: THEME.orange,
+  sendBtnAmber: {
+    width: 32,
+    height: 32,
+    borderRadius: 4,
+    backgroundColor: T.amber,
     justifyContent: 'center',
     alignItems: 'center',
   },
   sendBtnDisabled: {
-    opacity: 0.3,
+    opacity: 0.25,
   },
-  settingsToggle: {
-    width: 34,
-    height: 34,
+  compBtn: {
+    width: 32,
+    height: 32,
     justifyContent: 'center',
     alignItems: 'center',
+    borderRadius: 4,
+  },
+  compBtnActive: {
+    backgroundColor: T.amberGlow,
   },
 
   // Create Tab
@@ -1391,290 +1461,295 @@ const styles = StyleSheet.create({
   },
   createEmpty: {
     alignItems: 'center',
-    paddingTop: 80,
+    paddingTop: 60,
   },
-  createEmptyIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 14,
-    backgroundColor: THEME.orangeLight,
-    justifyContent: 'center',
+
+  // Style Presets
+  presetsScroll: {
+    marginBottom: 16,
+    marginHorizontal: -16,
+  },
+  presetsRow: {
+    paddingHorizontal: 16,
+    gap: 6,
+  },
+  presetChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 4,
+    backgroundColor: T.surface,
+    borderWidth: 1,
+    borderColor: T.border,
+  },
+  presetChipActive: {
+    borderColor: T.amberBorder,
+    backgroundColor: T.amberGlow,
+  },
+  presetText: {
+    fontFamily: MONO,
+    fontSize: 10,
+    fontWeight: '600',
+    color: T.textMuted,
+    letterSpacing: 0.5,
+  },
+  presetTextActive: {
+    color: T.amber,
+  },
+
+  // Generating Card
+  genCard: {
+    backgroundColor: T.surface,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: T.amberBorder,
+    marginBottom: 16,
+    overflow: 'hidden',
+  },
+  genCardInner: {
     alignItems: 'center',
-    marginBottom: 20,
+    padding: 28,
+    gap: 10,
   },
+  genCardLabel: {
+    fontFamily: MONO,
+    fontSize: 12,
+    fontWeight: '700',
+    color: T.amber,
+    letterSpacing: 2,
+  },
+  genCardPrompt: {
+    fontFamily: MONO,
+    fontSize: 11,
+    color: T.textMuted,
+    textAlign: 'center',
+    lineHeight: 16,
+  },
+
+  // Image Grid
   imageGrid: {
     gap: 16,
   },
   imageCard: {
-    borderRadius: 12,
+    borderRadius: 6,
     overflow: 'hidden',
-    backgroundColor: THEME.surface,
+    backgroundColor: T.surface,
     borderWidth: 1,
-    borderColor: THEME.border,
+    borderColor: T.border,
+  },
+  imageFrame: {
+    backgroundColor: T.black,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   image: {
     width: '100%',
   },
-  imageOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-  },
-  imagePrompt: {
-    color: THEME.text,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  imageActionBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  // Image Settings
-  imgSettings: {
-    backgroundColor: THEME.surface,
-    marginHorizontal: 0,
-    marginTop: 16,
-    padding: 18,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: THEME.border,
-  },
-  imgSettingsHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 18,
-  },
-  imgSettingsTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-  },
-  imgSettingsTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: THEME.text,
-    letterSpacing: 0.4,
-  },
-  imgSettingsClose: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    backgroundColor: THEME.surfaceHover,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  settingRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-    marginTop: 14,
-  },
-  settingLabel: {
-    fontSize: 12,
-    color: THEME.textSecondary,
-    fontWeight: '500',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  settingValue: {
-    fontSize: 13,
-    color: THEME.orange,
-    fontWeight: '700',
-  },
-
-  // Aspect ratio buttons — visual icons
-  ratioRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 10,
-    marginBottom: 4,
-  },
-  ratioBtn: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderRadius: 12,
-    backgroundColor: THEME.surfaceHover,
-    borderWidth: 1,
-    borderColor: 'transparent',
-    gap: 8,
-  },
-  ratioBtnActive: {
-    borderColor: THEME.orangeBorder,
-    backgroundColor: THEME.glowOrange,
-  },
-  ratioIcon: {
-    borderRadius: 3,
-    borderWidth: 1.5,
-    borderColor: THEME.textMuted,
-  },
-  ratioIconActive: {
-    borderColor: THEME.orange,
-    backgroundColor: THEME.orangeLight,
-  },
-  ratioBtnText: {
-    fontSize: 11,
-    color: THEME.textSecondary,
-    fontWeight: '600',
-    letterSpacing: 0.2,
-  },
-  ratioBtnTextActive: {
-    color: THEME.orange,
-  },
-
-  // Shimmer generating card
-  generatingCard: {
-    marginBottom: 16,
-    minHeight: 180,
-    borderColor: THEME.orangeBorder,
-    borderWidth: 1,
-    backgroundColor: THEME.surface,
-  },
-  generatingContent: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 32,
-    gap: 14,
-  },
-  generatingIconRing: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: THEME.glowOrange,
-    borderWidth: 1.5,
-    borderColor: THEME.orangeBorder,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  generatingLabel: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: THEME.text,
-  },
-  generatingPrompt: {
-    fontSize: 13,
-    color: THEME.textSecondary,
-    textAlign: 'center',
-    lineHeight: 19,
-  },
-
-  // Create tab empty state
-  createHeroWrapper: {
-    width: 100,
-    height: 100,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 24,
-    position: 'relative',
-  },
-  createHeroBg: {
-    position: 'absolute',
-    width: 100,
-    height: 100,
-    borderRadius: 28,
-    backgroundColor: THEME.glowOrange,
-    borderWidth: 1,
-    borderColor: THEME.orangeBorder,
-  },
-  createHeroIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 18,
-    backgroundColor: THEME.surfaceHover,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: THEME.orangeBorder,
-  },
-  createHeroDot1: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: THEME.orange,
-    opacity: 0.7,
-  },
-  createHeroDot2: {
-    position: 'absolute',
-    bottom: 10,
-    left: 4,
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: THEME.orange,
-    opacity: 0.4,
-  },
-  createHeroDot3: {
-    position: 'absolute',
-    top: 12,
-    left: 8,
-    width: 5,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: THEME.orange,
-    opacity: 0.25,
-  },
-
-  // Image prompt suggestions
-  imageSuggestions: {
-    width: '100%',
-    gap: 8,
-    marginTop: 8,
-  },
-  imageSuggestion: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: THEME.surface,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 12,
-    gap: 10,
-    borderWidth: 1,
-    borderColor: THEME.border,
-  },
-  imageSuggestionText: {
-    color: THEME.textSecondary,
-    fontSize: 13,
-    flex: 1,
-  },
-
-  // Image card overlay improvements
-  imageOverlayTop: {
-    height: 48,
-  },
-  imageOverlayBottom: {
+  imageInfo: {
     padding: 12,
-    backgroundColor: 'rgba(0,0,0,0.75)',
+    gap: 8,
+  },
+  imagePromptText: {
+    fontFamily: MONO,
+    color: T.text,
+    fontSize: 11,
+    lineHeight: 16,
   },
   imageActions: {
     flexDirection: 'row',
     gap: 8,
-    marginTop: 8,
     justifyContent: 'flex-end',
   },
-
-  // Settings toggle active state
-  settingsToggleActive: {
-    backgroundColor: THEME.glowOrange,
-    borderRadius: 9,
+  imageActionBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 4,
+    backgroundColor: T.surfaceLight,
+    borderWidth: 1,
+    borderColor: T.border,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 
-  // Modal
+  // Image Settings Panel
+  imgPanel: {
+    backgroundColor: T.surface,
+    marginTop: 16,
+    padding: 16,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: T.amberBorder,
+  },
+  imgPanelHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  imgPanelTitle: {
+    fontFamily: MONO,
+    fontSize: 11,
+    fontWeight: '700',
+    color: T.amber,
+    letterSpacing: 1,
+  },
+  imgPanelClose: {
+    fontFamily: MONO,
+    fontSize: 12,
+    color: T.textMuted,
+    fontWeight: '700',
+  },
+  panelLabel: {
+    fontFamily: MONO,
+    fontSize: 10,
+    color: T.textMuted,
+    letterSpacing: 0.5,
+    marginBottom: 8,
+    marginTop: 12,
+  },
+  panelValue: {
+    fontFamily: MONO,
+    fontSize: 12,
+    color: T.amber,
+    fontWeight: '700',
+  },
+  sliderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 12,
+    marginBottom: 2,
+  },
+
+  // Ratio buttons
+  ratioRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  ratioBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: 4,
+    backgroundColor: T.surfaceLight,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    gap: 6,
+  },
+  ratioBtnActive: {
+    borderColor: T.amberBorder,
+    backgroundColor: T.amberGlow,
+  },
+  ratioIcon: {
+    borderRadius: 2,
+    borderWidth: 1.5,
+    borderColor: T.textMuted,
+  },
+  ratioIconActive: {
+    borderColor: T.amber,
+  },
+  ratioText: {
+    fontFamily: MONO,
+    fontSize: 10,
+    color: T.textMuted,
+    fontWeight: '600',
+  },
+  ratioTextActive: {
+    color: T.amber,
+  },
+
+  // Negative prompt
+  negInput: {
+    fontFamily: MONO,
+    fontSize: 12,
+    color: T.text,
+    backgroundColor: T.surfaceLight,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: T.border,
+    padding: 10,
+    minHeight: 44,
+    textAlignVertical: 'top',
+  },
+
+  // Prompt History
+  historyPanel: {
+    backgroundColor: T.surface,
+    marginTop: 16,
+    padding: 16,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: T.border,
+  },
+  historyItem: {
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: T.border,
+  },
+  historyText: {
+    fontFamily: MONO,
+    fontSize: 11,
+    color: T.text,
+  },
+
+  // Fullscreen Viewer
+  viewer: {
+    flex: 1,
+    backgroundColor: T.black,
+  },
+  viewerHeader: {
+    position: 'absolute',
+    top: 50,
+    right: 16,
+    zIndex: 10,
+  },
+  viewerClose: {
+    width: 40,
+    height: 40,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  viewerImageWrap: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  viewerImage: {
+    width: '100%',
+    height: '100%',
+  },
+  viewerBar: {
+    padding: 16,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+  },
+  viewerPrompt: {
+    fontFamily: MONO,
+    fontSize: 12,
+    color: T.text,
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  viewerActions: {
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'flex-end',
+  },
+  viewerBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 6,
+    backgroundColor: T.surfaceLight,
+    borderWidth: 1,
+    borderColor: T.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  // Model Picker Modal
   modal: {
     flex: 1,
-    backgroundColor: THEME.noir,
+    backgroundColor: T.bg,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1682,12 +1757,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: THEME.border,
+    borderBottomColor: T.greenBorder,
   },
   modalTitle: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: THEME.text,
+    fontFamily: MONO,
+    fontSize: 14,
+    fontWeight: '700',
+    color: T.green,
+    letterSpacing: 1,
   },
   modalClose: {
     width: 36,
@@ -1695,43 +1772,69 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  modalCloseText: {
+    fontFamily: MONO,
+    fontSize: 14,
+    color: T.textMuted,
+    fontWeight: '700',
+  },
   modalList: {
     padding: 16,
   },
   modelItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 14,
-    borderRadius: 10,
-    marginBottom: 8,
-    backgroundColor: THEME.surface,
+    padding: 12,
+    borderRadius: 4,
+    marginBottom: 4,
+    backgroundColor: T.surface,
     borderWidth: 1,
     borderColor: 'transparent',
   },
   modelItemSelected: {
-    borderColor: THEME.red,
-    backgroundColor: THEME.glowRed,
+    borderColor: T.greenBorder,
+    backgroundColor: T.greenGlow,
   },
   modelInfo: {
     flex: 1,
   },
+  modelNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   modelName: {
-    fontSize: 14,
+    fontFamily: MONO,
+    fontSize: 12,
     fontWeight: '500',
-    color: THEME.text,
-    marginBottom: 2,
+    color: T.text,
+  },
+  modelMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    gap: 8,
+    flexWrap: 'wrap',
   },
   modelId: {
-    fontSize: 11,
-    color: THEME.textMuted,
+    fontFamily: MONO,
+    fontSize: 10,
+    color: T.textDim,
   },
-  modelCheck: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: THEME.surface,
-    justifyContent: 'center',
-    alignItems: 'center',
+  badgeRow: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  badge: {
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 2,
+    backgroundColor: T.surfaceActive,
+    borderWidth: 1,
+    borderColor: T.border,
+  },
+  badgeText: {
+    fontFamily: MONO,
+    fontSize: 8,
+    fontWeight: '700',
+    color: T.cyan,
+    letterSpacing: 0.5,
   },
 });
