@@ -13,7 +13,10 @@ import {
   ActivityIndicator,
   Text,
   Share,
+  Animated,
+  Dimensions,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import * as FileSystem from 'expo-file-system';
@@ -66,6 +69,10 @@ const THEME = {
   // Glows
   glowRed: 'rgba(255, 71, 87, 0.15)',
   glowOrange: 'rgba(255, 127, 80, 0.12)',
+
+  // Additional image creation accents
+  orangeBorder: 'rgba(255, 127, 80, 0.4)',
+  orangeGlow: 'rgba(255, 127, 80, 0.2)',
 };
 
 interface Message {
@@ -162,6 +169,15 @@ const SUGGESTIONS = [
   { icon: 'globe', text: 'Plan a trip to Paris' },
 ];
 
+const IMAGE_SUGGESTIONS = [
+  { icon: 'sun', text: 'Cinematic golden hour landscape, dramatic lighting' },
+  { icon: 'zap', text: 'Futuristic neon city at night, cyberpunk style' },
+  { icon: 'feather', text: 'Soft watercolor portrait, pastel tones' },
+  { icon: 'layers', text: 'Abstract geometric art, vibrant colors' },
+];
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
+
 export default function MainScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -183,9 +199,11 @@ export default function MainScreen() {
 
   // Refs
   const listRef = useRef<FlatList>(null);
+  const imageScrollRef = useRef<ScrollView>(null);
   const controllerRef = useRef<AbortController | null>(null);
   const startTimeRef = useRef<number>(0);
   const tokenRef = useRef<number>(0);
+  const shimmerAnim = useRef(new Animated.Value(0)).current;
 
   // Load settings and models
   useEffect(() => {
@@ -243,6 +261,21 @@ export default function MainScreen() {
     }
   }, [imageModels, settings.imageModel, updateSettings]);
 
+  // Shimmer animation for image generation loading state
+  useEffect(() => {
+    if (isGenerating) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(shimmerAnim, { toValue: 1, duration: 900, useNativeDriver: true }),
+          Animated.timing(shimmerAnim, { toValue: 0.2, duration: 900, useNativeDriver: true }),
+        ])
+      ).start();
+    } else {
+      shimmerAnim.stopAnimation();
+      shimmerAnim.setValue(0);
+    }
+  }, [isGenerating, shimmerAnim]);
+
   const getModelName = (id: string) => {
     const m = models.find(x => x.id === id);
     return m?.model_spec?.name || id.split('/').pop() || id;
@@ -253,6 +286,7 @@ export default function MainScreen() {
   }, []);
 
   const downloadImage = useCallback(async (img: GeneratedImage) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
       if (Platform.OS === 'web') {
         if (typeof document === 'undefined') return;
@@ -278,6 +312,7 @@ export default function MainScreen() {
       const fileUri = `${dir}vgpt-${img.id}.${ext}`;
       await FileSystem.writeAsStringAsync(fileUri, base64, { encoding: FileSystem.EncodingType.Base64 });
       await Share.share({ url: fileUri, title: 'vGPT Image', message: img.prompt });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: any) {
       Alert.alert('Download failed', e?.message || 'Unable to download image.');
     }
@@ -478,6 +513,7 @@ export default function MainScreen() {
       return;
     }
 
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setIsGenerating(true);
 
     try {
@@ -496,9 +532,9 @@ export default function MainScreen() {
       if (modelMaxSteps) {
         steps = Math.min(steps, modelMaxSteps);
       }
-      // Force 1 step for nano bananapro models
+      // Force 1 step for any banana-variant models (nano-banana, bananapro, etc.)
       const modelIdLower = model.id.toLowerCase();
-      if (modelIdLower.includes('bananapro') || modelIdLower.includes('nano-banana')) {
+      if (modelIdLower.includes('banana')) {
         steps = 1;
       }
 
@@ -536,7 +572,11 @@ export default function MainScreen() {
 
       setImages(prev => [img, ...prev]);
       setImagePrompt('');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // Scroll to top to reveal newly generated image
+      setTimeout(() => imageScrollRef.current?.scrollTo({ y: 0, animated: true }), 100);
     } catch (e: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('Error', e.message || 'Failed to generate image.');
     } finally {
       setIsGenerating(false);
@@ -756,14 +796,56 @@ export default function MainScreen() {
         ) : (
           /* CREATE TAB */
           <View style={styles.flex}>
-            <ScrollView style={styles.flex} contentContainerStyle={styles.createContent}>
-              {images.length === 0 ? (
+            <ScrollView
+              ref={imageScrollRef}
+              style={styles.flex}
+              contentContainerStyle={styles.createContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Generating shimmer card */}
+              {isGenerating && (
+                <Animated.View style={[styles.imageCard, styles.generatingCard, { opacity: shimmerAnim }]}>
+                  <View style={styles.generatingContent}>
+                    <View style={styles.generatingIconRing}>
+                      <Feather name="zap" size={26} color={THEME.orange} />
+                    </View>
+                    <Text style={styles.generatingLabel}>Creating your image…</Text>
+                    <Text style={styles.generatingPrompt} numberOfLines={2}>{imagePrompt}</Text>
+                  </View>
+                </Animated.View>
+              )}
+
+              {images.length === 0 && !isGenerating ? (
                 <View style={styles.createEmpty}>
-                  <View style={styles.createEmptyIcon}>
-                    <Feather name="image" size={28} color={THEME.orange} />
+                  {/* Decorative icon cluster */}
+                  <View style={styles.createHeroWrapper}>
+                    <View style={styles.createHeroBg} />
+                    <View style={styles.createHeroIcon}>
+                      <Feather name="image" size={32} color={THEME.orange} />
+                    </View>
+                    <View style={styles.createHeroDot1} />
+                    <View style={styles.createHeroDot2} />
+                    <View style={styles.createHeroDot3} />
                   </View>
                   <Text style={styles.emptyTitle}>Generate images</Text>
-                  <Text style={styles.emptySub}>Describe what you want to create</Text>
+                  <Text style={styles.emptySub}>Describe any scene, style, or idea</Text>
+
+                  {/* Example prompts */}
+                  <View style={styles.imageSuggestions}>
+                    {IMAGE_SUGGESTIONS.map((s, i) => (
+                      <TouchableOpacity
+                        key={i}
+                        style={styles.imageSuggestion}
+                        onPress={() => {
+                          setImagePrompt(s.text);
+                          Haptics.selectionAsync();
+                        }}
+                      >
+                        <Feather name={s.icon as any} size={13} color={THEME.orange} />
+                        <Text style={styles.imageSuggestionText} numberOfLines={1}>{s.text}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                 </View>
               ) : (
                 <View style={styles.imageGrid}>
@@ -771,19 +853,30 @@ export default function MainScreen() {
                     <View key={img.id} style={styles.imageCard}>
                       <Image
                         source={{ uri: img.imageData }}
-                        style={[styles.image, { aspectRatio: (img.width || 1) / (img.height || 1) }]}
+                        style={[styles.image, { aspectRatio: (img.width || 16) / (img.height || 9) }]}
                         contentFit="cover"
                       />
+                      {/* Gradient-simulated overlay */}
                       <View style={styles.imageOverlay}>
-                        <View style={styles.imageOverlayRow}>
+                        <View style={styles.imageOverlayTop} />
+                        <View style={styles.imageOverlayBottom}>
                           <Text style={styles.imagePrompt} numberOfLines={2}>{img.prompt}</Text>
-                          <TouchableOpacity
-                            onPress={() => downloadImage(img)}
-                            style={styles.imageActionBtn}
-                            accessibilityLabel="Download image"
-                          >
-                            <Feather name="download" size={16} color={THEME.blanc} />
-                          </TouchableOpacity>
+                          <View style={styles.imageActions}>
+                            <TouchableOpacity
+                              onPress={() => downloadImage(img)}
+                              style={styles.imageActionBtn}
+                              accessibilityLabel="Share image"
+                            >
+                              <Feather name="share" size={15} color={THEME.blanc} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => downloadImage(img)}
+                              style={styles.imageActionBtn}
+                              accessibilityLabel="Download image"
+                            >
+                              <Feather name="download" size={15} color={THEME.blanc} />
+                            </TouchableOpacity>
+                          </View>
                         </View>
                       </View>
                     </View>
@@ -791,14 +884,46 @@ export default function MainScreen() {
                 </View>
               )}
 
-              {/* Image Settings */}
+              {/* Image Settings Panel */}
               {imageSettings && (
                 <View style={styles.imgSettings}>
                   <View style={styles.imgSettingsHeader}>
-                    <Text style={styles.imgSettingsTitle}>Settings</Text>
-                    <TouchableOpacity onPress={() => setImageSettings(false)}>
-                      <Feather name="x" size={18} color={THEME.textSecondary} />
+                    <View style={styles.imgSettingsTitleRow}>
+                      <Feather name="sliders" size={14} color={THEME.orange} />
+                      <Text style={styles.imgSettingsTitle}>Generation Settings</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => setImageSettings(false)} style={styles.imgSettingsClose}>
+                      <Feather name="x" size={16} color={THEME.textSecondary} />
                     </TouchableOpacity>
+                  </View>
+
+                  {/* Aspect Ratio - visual ratio icons */}
+                  <Text style={styles.settingLabel}>Aspect Ratio</Text>
+                  <View style={styles.ratioRow}>
+                    {[
+                      { label: '1:1', w: 1024, h: 1024, boxW: 28, boxH: 28 },
+                      { label: '9:16', w: 576, h: 1024, boxW: 20, boxH: 28 },
+                      { label: '16:9', w: 1024, h: 576, boxW: 28, boxH: 17 },
+                    ].map(s => {
+                      const active = settings.imageWidth === s.w && settings.imageHeight === s.h;
+                      return (
+                        <TouchableOpacity
+                          key={s.label}
+                          onPress={() => {
+                            updateSettings({ imageWidth: s.w, imageHeight: s.h });
+                            Haptics.selectionAsync();
+                          }}
+                          style={[styles.ratioBtn, active && styles.ratioBtnActive]}
+                        >
+                          <View style={[
+                            styles.ratioIcon,
+                            { width: s.boxW, height: s.boxH },
+                            active && styles.ratioIconActive,
+                          ]} />
+                          <Text style={[styles.ratioBtnText, active && styles.ratioBtnTextActive]}>{s.label}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
 
                   <View style={styles.settingRow}>
@@ -830,28 +955,6 @@ export default function MainScreen() {
                     maximumTrackTintColor={THEME.border}
                     thumbTintColor={THEME.orange}
                   />
-
-                  <View style={styles.sizes}>
-                    {[
-                      { label: '1:1', w: 1024, h: 1024 },
-                      { label: '9:16', w: 576, h: 1024 },
-                      { label: '16:9', w: 1024, h: 576 },
-                    ].map(s => (
-                      <TouchableOpacity
-                        key={s.label}
-                        onPress={() => updateSettings({ imageWidth: s.w, imageHeight: s.h })}
-                        style={[
-                          styles.sizeBtn,
-                          settings.imageWidth === s.w && settings.imageHeight === s.h && styles.sizeBtnActive
-                        ]}
-                      >
-                        <Text style={[
-                          styles.sizeBtnText,
-                          settings.imageWidth === s.w && settings.imageHeight === s.h && styles.sizeBtnTextActive
-                        ]}>{s.label}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
                 </View>
               )}
             </ScrollView>
@@ -860,14 +963,17 @@ export default function MainScreen() {
             <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
               <View style={styles.composerInner}>
                 <TouchableOpacity
-                  onPress={() => setImageSettings(!imageSettings)}
-                  style={styles.settingsToggle}
+                  onPress={() => {
+                    setImageSettings(!imageSettings);
+                    Haptics.selectionAsync();
+                  }}
+                  style={[styles.settingsToggle, imageSettings && styles.settingsToggleActive]}
                 >
                   <Feather name="sliders" size={18} color={imageSettings ? THEME.orange : THEME.textMuted} />
                 </TouchableOpacity>
                 <TextInput
                   style={styles.input}
-                  placeholder="Describe an image..."
+                  placeholder="Describe an image…"
                   placeholderTextColor={THEME.textMuted}
                   value={imagePrompt}
                   onChangeText={setImagePrompt}
@@ -1314,24 +1420,19 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    padding: 12,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-  },
-  imageOverlayRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
   },
   imagePrompt: {
-    flex: 1,
     color: THEME.text,
     fontSize: 13,
+    lineHeight: 18,
   },
   imageActionBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 9,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1339,9 +1440,10 @@ const styles = StyleSheet.create({
   // Image Settings
   imgSettings: {
     backgroundColor: THEME.surface,
-    margin: 16,
-    padding: 16,
-    borderRadius: 12,
+    marginHorizontal: 0,
+    marginTop: 16,
+    padding: 18,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: THEME.border,
   },
@@ -1349,55 +1451,224 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 18,
+  },
+  imgSettingsTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
   },
   imgSettingsTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: THEME.text,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.4,
+  },
+  imgSettingsClose: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: THEME.surfaceHover,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   settingRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 4,
-    marginTop: 12,
+    marginTop: 14,
   },
   settingLabel: {
-    fontSize: 13,
+    fontSize: 12,
     color: THEME.textSecondary,
+    fontWeight: '500',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   settingValue: {
     fontSize: 13,
     color: THEME.orange,
-    fontWeight: '600',
+    fontWeight: '700',
   },
-  sizes: {
+
+  // Aspect ratio buttons — visual icons
+  ratioRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 16,
+    gap: 10,
+    marginTop: 10,
+    marginBottom: 4,
   },
-  sizeBtn: {
+  ratioBtn: {
     flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: THEME.surfaceHover,
     alignItems: 'center',
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: THEME.surfaceHover,
     borderWidth: 1,
     borderColor: 'transparent',
+    gap: 8,
   },
-  sizeBtnActive: {
+  ratioBtnActive: {
+    borderColor: THEME.orangeBorder,
+    backgroundColor: THEME.glowOrange,
+  },
+  ratioIcon: {
+    borderRadius: 3,
+    borderWidth: 1.5,
+    borderColor: THEME.textMuted,
+  },
+  ratioIconActive: {
     borderColor: THEME.orange,
     backgroundColor: THEME.orangeLight,
   },
-  sizeBtnText: {
-    fontSize: 12,
+  ratioBtnText: {
+    fontSize: 11,
     color: THEME.textSecondary,
-    fontWeight: '500',
+    fontWeight: '600',
+    letterSpacing: 0.2,
   },
-  sizeBtnTextActive: {
+  ratioBtnTextActive: {
     color: THEME.orange,
+  },
+
+  // Shimmer generating card
+  generatingCard: {
+    marginBottom: 16,
+    minHeight: 180,
+    borderColor: THEME.orangeBorder,
+    borderWidth: 1,
+    backgroundColor: THEME.surface,
+  },
+  generatingContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+    gap: 14,
+  },
+  generatingIconRing: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: THEME.glowOrange,
+    borderWidth: 1.5,
+    borderColor: THEME.orangeBorder,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  generatingLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: THEME.text,
+  },
+  generatingPrompt: {
+    fontSize: 13,
+    color: THEME.textSecondary,
+    textAlign: 'center',
+    lineHeight: 19,
+  },
+
+  // Create tab empty state
+  createHeroWrapper: {
+    width: 100,
+    height: 100,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 24,
+    position: 'relative',
+  },
+  createHeroBg: {
+    position: 'absolute',
+    width: 100,
+    height: 100,
+    borderRadius: 28,
+    backgroundColor: THEME.glowOrange,
+    borderWidth: 1,
+    borderColor: THEME.orangeBorder,
+  },
+  createHeroIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 18,
+    backgroundColor: THEME.surfaceHover,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: THEME.orangeBorder,
+  },
+  createHeroDot1: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: THEME.orange,
+    opacity: 0.7,
+  },
+  createHeroDot2: {
+    position: 'absolute',
+    bottom: 10,
+    left: 4,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: THEME.orange,
+    opacity: 0.4,
+  },
+  createHeroDot3: {
+    position: 'absolute',
+    top: 12,
+    left: 8,
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: THEME.orange,
+    opacity: 0.25,
+  },
+
+  // Image prompt suggestions
+  imageSuggestions: {
+    width: '100%',
+    gap: 8,
+    marginTop: 8,
+  },
+  imageSuggestion: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: THEME.surface,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: THEME.border,
+  },
+  imageSuggestionText: {
+    color: THEME.textSecondary,
+    fontSize: 13,
+    flex: 1,
+  },
+
+  // Image card overlay improvements
+  imageOverlayTop: {
+    height: 48,
+  },
+  imageOverlayBottom: {
+    padding: 12,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+  },
+  imageActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+    justifyContent: 'flex-end',
+  },
+
+  // Settings toggle active state
+  settingsToggleActive: {
+    backgroundColor: THEME.glowOrange,
+    borderRadius: 9,
   },
 
   // Modal
