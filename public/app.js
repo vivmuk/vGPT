@@ -21,8 +21,14 @@ const NAV = [
 ];
 
 // ── render ──────────────────────────────────────────────────────────────────
+let renderedTool = '';
+let scrollRestoreFrame = 0;
 function render() {
   const tool = state.tool;
+  const previousScroll = $('#main .scroll');
+  const sameTool = renderedTool === tool;
+  const scrollTop = sameTool && previousScroll ? previousScroll.scrollTop : 0;
+  const followBottom = sameTool && previousScroll ? previousScroll.scrollHeight - previousScroll.scrollTop - previousScroll.clientHeight < 56 : false;
   const navMeta = NAV.find(n => n.k === tool) || NAV[0];
   document.documentElement.style.setProperty('--nav-accent', `var(${navMeta.accent})`);
 
@@ -32,6 +38,17 @@ function render() {
   try { section.appendChild(views[tool]()); }
   catch (e) { console.error(e); section.appendChild(el('div', { class: 'pad' }, el('div', { class: 'notice', text: 'Something went wrong rendering this tool.' }))); }
   main.appendChild(section);
+  renderedTool = tool;
+
+  // Progress polling and streamed tokens rebuild the view. Preserve the user's
+  // reading position unless they were already following the newest content.
+  const nextScroll = $('#main .scroll');
+  if (sameTool && nextScroll) {
+    const restore = () => { nextScroll.scrollTop = followBottom ? nextScroll.scrollHeight : scrollTop; };
+    restore();
+    cancelAnimationFrame(scrollRestoreFrame);
+    scrollRestoreFrame = requestAnimationFrame(restore);
+  }
 
   renderNav();
   renderHeader();

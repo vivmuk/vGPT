@@ -16,17 +16,18 @@ import {
 // per-view form state (kept across re-renders within a session)
 const F = {
   chat: { atts: [], webSearch: 'auto', effort: '' },
-  imgGen: { prompt: '', negative: '', ratio: '16:9', resolution: '', quality: '', steps: null, cfg: 5, style: '', variants: 1, seed: '', format: 'webp', hideWm: false },
+  imgGen: { prompt: '', negative: '', ratio: '16:9', resolution: '', quality: '', steps: null, cfg: 5, style: '', variants: 1, seed: '', format: 'webp', hideWm: false, advanced: false },
   edit: { prompt: '', images: [], ratio: 'auto', resolution: '', quality: '', format: '' },
   enhance: { image: null, scale: 2, enhance: true, creativity: 0.5, replication: 0.35, prompt: '' },
   bg: { image: null },
   video: { prompt: '', negative: '', duration: '', ratio: '', resolution: '', audio: true, image: null, endImage: null, quote: null },
   music: { prompt: '', lyrics: '', optimizer: false, instrumental: false, voice: '', lang: '', duration: null, speed: null, quote: null },
-  speech: { text: '', voice: '', format: 'mp3', speed: 1, lang: '', style: '', temperature: 0.7, topP: 1 },
+  speech: { text: '', voice: '', format: 'mp3', speed: 1, lang: '', style: '', temperature: 0.7, topP: 1, advanced: false },
   transcribe: { audio: null, filename: '', text: '', language: '' },
 };
 const recent = { image: [], video: [], audio: [] }; // inline results per view
 const busy = {};                                      // view -> bool
+const jobState = {};                                  // async job lifecycle for progress UI
 let chat = { messages: [], streaming: false, abort: null };
 
 // ── small control builders ──────────────────────────────────────────────────
@@ -81,10 +82,76 @@ function select(options, value, onChange, labels) {
   s.addEventListener('change', e => onChange(e.target.value));
   return s;
 }
+function advancedPanel(title, children, open = false, onToggle) {
+  const panel = el('details', { class: 'advanced-panel card', open }, [
+    el('summary', { html: `${icon('sliders', 14)}<span>${title}</span>${icon('chevronDown', 15)}` }),
+    el('div', { class: 'advanced-body' }, children),
+  ]);
+  if (onToggle) panel.addEventListener('toggle', () => onToggle(panel.open));
+  return panel;
+}
+function copyText(text) {
+  if (!text) return;
+  const write = navigator.clipboard?.writeText(text);
+  if (!write) { toast('Clipboard is not available', 'err'); return; }
+  write.then(() => toast('Copied', 'ok')).catch(() => toast('Could not copy', 'err'));
+}
+function downloadText(text, filename = 'vgpt-response.txt') {
+  if (!text) return;
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+  downloadDataUrl(url, filename);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+function appendActivityDock(parent, view) {
+  const dock = activityDock(view);
+  if (dock) parent.appendChild(dock);
+}
+function activityDock(view) {
+  const isChat = view === 'chat';
+  const active = isChat ? chat.streaming : busy[view];
+  if (!active) return null;
+  const progress = typeof active === 'number' ? Math.max(0.02, Math.min(0.99, active)) : null;
+  const pct = progress == null ? null : Math.round(progress * 100);
+  const labels = { chat: 'vGPT is writing', image: 'Creating image', video: 'Generating video', audio: 'Generating audio' };
+  const sub = view === 'video' ? (jobState.video?.status || jobState.video?.stage || 'preparing') : pct != null ? `${pct}% complete` : 'Generation in progress';
+  return el('div', { class: 'activity-dock', role: 'status', 'aria-live': 'polite' }, [
+    el('div', { class: 'activity-icon', html: icon(view === 'chat' ? 'sparkles' : view === 'image' ? 'image' : view === 'video' ? 'video' : 'music', 15) }),
+    el('div', { class: 'activity-body' }, [
+      el('div', { class: 'activity-title', text: labels[view] }),
+      el('div', { class: 'activity-sub', text: String(sub).replace(/_/g, ' ').toLowerCase() }),
+      el('div', { class: `progress ${pct == null ? 'indeterminate' : ''}` }, el('i', { style: pct == null ? {} : { width: pct + '%' } })),
+    ]),
+    pct != null ? el('div', { class: 'activity-pct', text: pct + '%' }) : el('div', { class: 'activity-pulse' }),
+  ]);
+}
 function generateBar(label, accentIcon, onClick, disabled, priceNote) {
   return el('div', { class: 'generate-bar' }, [
     priceNote ? el('div', { class: 'hint', style: { textAlign: 'center', marginBottom: '8px' }, html: priceNote }) : null,
     el('button', { class: 'btn primary full', disabled, html: `${icon(accentIcon, 18)} ${label}`, onclick: onClick }),
+  ]);
+}
+function videoProgressCard(progress) {
+  const js = jobState.video || { stage: 'preparing' };
+  const stages = [
+    ['preparing', 'Preparing request'],
+    ['queued', 'Queued with Venice'],
+    ['rendering', 'Rendering frames'],
+    ['finalizing', 'Finalizing media'],
+  ];
+  const active = Math.max(0, stages.findIndex(([key]) => key === js.stage));
+  return el('div', { class: 'card job-card' }, [
+    el('div', { class: 'job-head' }, [el('div', { class: 'spinner sm' }), el('div', {}, [
+      el('div', { class: 'lp', text: js.stage === 'queued' ? 'Your video is queued' : js.stage === 'finalizing' ? 'Finalizing your video…' : 'Rendering your video…' }),
+      el('div', { class: 'ls', text: js.status ? String(js.status).replace(/_/g, ' ').toLowerCase() : 'Keep this screen open while Venice creates your clip.' }),
+    ])]),
+    el('div', { class: 'job-steps' }, stages.map(([key, label], i) => el('div', { class: `job-step ${i < active ? 'done' : i === active ? 'active' : ''}` }, [
+      el('span', { class: 'job-dot', html: i < active ? icon('check', 11) : '' }),
+      el('span', { text: label }),
+    ]))),
+    el('div', { class: 'job-progress' }, [
+      el('div', { class: 'progress' }, el('i', { style: { width: Math.round((typeof progress === 'number' ? progress : 0.06) * 100) + '%' } })),
+      el('span', { text: Math.round((typeof progress === 'number' ? progress : 0.06) * 100) + '%' }),
+    ]),
   ]);
 }
 function loadingCard(primary, sub, progress) {
@@ -92,7 +159,7 @@ function loadingCard(primary, sub, progress) {
     el('div', { class: 'spinner' }),
     el('div', { class: 'lp', text: primary }),
     sub ? el('div', { class: 'ls', text: sub }) : null,
-    progress != null ? el('div', { class: 'progress' }, el('i', { style: { width: Math.round(progress * 100) + '%' } })) : null,
+    progress != null ? el('div', { class: 'job-progress' }, [el('div', { class: 'progress' }, el('i', { style: { width: Math.round(progress * 100) + '%' } })), el('span', { text: Math.round(progress * 100) + '%' })]) : null,
   ]);
 }
 const ACCENT2 = { '--c-chat': '#ff8a4c', '--c-image': '#ffce4c', '--c-edit': '#ff8a4c', '--c-enhance': '#21d4fd', '--c-video': '#21d4fd', '--c-music': '#4b8bff', '--c-voice': '#21d4fd', '--c-library': '#ff8ad0' };
@@ -152,7 +219,7 @@ function resultCard(asset) {
 
   const acts = el('div', { class: 'result-actions' });
   const dlName = `vgpt-${asset.id}.${asset.ext || (asset.kind === 'image' ? 'png' : asset.kind === 'video' ? 'mp4' : 'mp3')}`;
-  acts.appendChild(el('button', { class: 'act', html: `${icon('download', 14)} Save`, onclick: () => downloadDataUrl(asset.dataUrl, dlName) }));
+  acts.appendChild(el('button', { class: 'act', html: `${icon('download', 14)} Download`, onclick: () => downloadDataUrl(asset.dataUrl, dlName) }));
   if (asset.kind === 'image') {
     acts.appendChild(el('button', { class: 'act accent', html: `${icon('wand', 14)} Edit`, onclick: () => nav.goTo('image', { mode: 'edit', handoff: { image: asset.dataUrl } }) }));
     acts.appendChild(el('button', { class: 'act', html: `${icon('upscale', 14)} Enhance`, onclick: () => nav.goTo('image', { mode: 'enhance', handoff: { image: asset.dataUrl } }) }));
@@ -199,7 +266,7 @@ async function runJob(view, fn) {
   busy[view] = true; nav.refresh();
   try { await fn(); }
   catch (e) { toast(e.message || 'Something went wrong', 'err'); }
-  finally { busy[view] = false; nav.refresh(); }
+  finally { busy[view] = false; if (view === 'video') delete jobState.video; nav.refresh(); }
 }
 
 // ════════════════════════════ CHAT ════════════════════════════
@@ -231,7 +298,6 @@ function viewChat() {
     const list = el('div', { class: 'chat-list' });
     chat.messages.forEach(msg => list.appendChild(renderMsg(msg)));
     scroll.appendChild(list);
-    setTimeout(() => scroll.scrollTo({ top: scroll.scrollHeight }), 0);
   }
 
   // composer
@@ -249,6 +315,10 @@ function viewChat() {
   const sendBtn = el('button', { class: 'cbtn send', html: chat.streaming ? icon('x', 18) : icon('send', 18), onclick: () => chat.streaming ? stopChat() : send() });
 
   const composer = el('div', { class: 'composer' }, [
+    caps.reasoningEffort ? el('div', { class: 'composer-options' }, [
+      el('span', { text: 'Reasoning' }),
+      chips(['', ...(caps.effortOptions || ['low', 'medium', 'high'])], F.chat.effort, v => { F.chat.effort = v; nav.refresh(); }, v => v || 'Auto'),
+    ]) : null,
     F.chat.atts.length ? atts : null,
     el('div', { class: 'composer-inner' }, [attachBtn, ta, webBtn, sendBtn].filter(Boolean)),
   ]);
@@ -267,6 +337,7 @@ function viewChat() {
   }
 
   frag.appendChild(scroll);
+  appendActivityDock(frag, 'chat');
   frag.appendChild(composer);
   return frag;
 }
@@ -290,6 +361,12 @@ function renderMsg(msg) {
     body.appendChild(el('details', { class: 'reasoning' }, [
       el('summary', { html: `${icon('sparkles', 14)} Reasoning` }),
       el('div', { class: 'r-body', text: msg.reasoning }),
+    ]));
+  }
+  if (!isUser && !msg.streaming && msg.content) {
+    body.appendChild(el('div', { class: 'msg-actions' }, [
+      el('button', { class: 'act', html: `${icon('copy', 14)} Copy`, onclick: () => copyText(msg.content) }),
+      el('button', { class: 'act', html: `${icon('download', 14)} Download`, onclick: () => downloadText(msg.content) }),
     ]));
   }
   if (!isUser && msg.metrics) {
@@ -379,6 +456,7 @@ function viewImage() {
   const pad = el('div', { class: 'pad pad-b' });
   scroll.appendChild(pad);
   frag.appendChild(scroll);
+  appendActivityDock(frag, 'image');
 
   if (mode === 'generate') buildGenerate(pad);
   else if (mode === 'edit') buildEdit(pad);
@@ -391,10 +469,11 @@ function resultsBlock(view) {
   const out = el('div', {});
   if (busy[view]) {
     const prog = busy[view] === true ? null : busy[view];
-    out.appendChild(loadingCard(
+    if (view === 'video') out.appendChild(videoProgressCard(prog));
+    else out.appendChild(loadingCard(
       view === 'video' ? 'Rendering your video…' : view === 'audio' ? 'Composing audio…' : 'Generating…',
       view === 'video' || view === 'audio' ? 'This can take 1–3 minutes. Keep this screen open.' : 'Usually a few seconds.',
-      typeof prog === 'number' ? prog : (view === 'video' || view === 'audio' ? 0.06 : null),
+      typeof prog === 'number' ? prog : (view === 'audio' ? 0.06 : null),
     ));
   }
   recent[view].forEach(a => out.appendChild(resultCard(a)));
@@ -437,15 +516,15 @@ function buildGenerate(pad) {
   pad.appendChild(form);
 
   // advanced (style, variants, seed, format)
-  const adv = el('div', { class: 'card' });
-  adv.appendChild(el('div', { class: 'panel-title', html: `${icon('sliders', 13)} Options` }));
+  const advBody = [];
   if (state.styles.length) {
-    adv.appendChild(field('Style preset', select(['', ...state.styles], f.style, v => f.style = v, o2 => o2 || 'None')));
+    advBody.push(field('Style preset', select(['', ...state.styles], f.style, v => f.style = v, o2 => o2 || 'None')));
   }
-  adv.appendChild(field('Variants', chips([1, 2, 3, 4], f.variants, v => { f.variants = v; nav.refresh(); }), 'Generate multiple options at once'));
-  adv.appendChild(field('Output format', chips(['webp', 'png', 'jpeg'], f.format, v => { f.format = v; nav.refresh(); })));
-  adv.appendChild(field('Seed', (() => { const i = el('input', { type: 'number', placeholder: 'Random', value: f.seed }); i.addEventListener('input', e => f.seed = e.target.value); return i; })(), 'Reuse a seed for reproducible results'));
-  pad.appendChild(adv);
+  advBody.push(field('Variants', chips([1, 2, 3, 4], f.variants, v => { f.variants = v; nav.refresh(); }), 'Generate multiple options at once'));
+  advBody.push(field('Output format', chips(['webp', 'png', 'jpeg'], f.format, v => { f.format = v; nav.refresh(); })));
+  advBody.push(field('Seed', (() => { const i = el('input', { type: 'number', placeholder: 'Random', value: f.seed }); i.addEventListener('input', e => f.seed = e.target.value); return i; })(), 'Reuse a seed for reproducible results'));
+  advBody.push(switchRow('Hide watermark', f.hideWm, v => { f.hideWm = v; nav.refresh(); }, 'Only applies when supported by the selected image model'));
+  pad.appendChild(advancedPanel('Advanced options', advBody, f.advanced, open => f.advanced = open));
 
   pad.appendChild(resultsBlock('image'));
 
@@ -588,6 +667,7 @@ function viewVideo() {
   const scroll = el('div', { class: 'scroll' });
   const pad = el('div', { class: 'pad pad-b' });
   scroll.appendChild(pad); frag.appendChild(scroll);
+  appendActivityDock(frag, 'video');
 
   const id = selectedFor('video');
   const m = findModel(id);
@@ -639,9 +719,16 @@ function viewVideo() {
     if (o.audioConfigurable) body.audio = !!f.audio;
     if (f.negative.trim()) body.negative_prompt = f.negative.trim();
     if (o.allowsImage && f.image) body.image_url = f.image;
+    jobState.video = { stage: 'preparing' }; nav.refresh();
     const q = await api.videoQueue(body);
     if (!q.queue_id) throw new Error('Could not queue video');
-    const url = await pollJob('video', { model: id, queueId: q.queue_id, downloadUrl: q.download_url }, (p) => { busy.video = (p == null || p <= 0.02) ? true : p; nav.refresh(); });
+    jobState.video = { stage: 'queued', status: 'waiting in queue', queueId: q.queue_id }; nav.refresh();
+    const url = await pollJob('video', { model: id, queueId: q.queue_id, downloadUrl: q.download_url }, (p, status) => {
+      const statusText = status || 'rendering';
+      const finalizing = /complete|final/i.test(statusText) || (typeof p === 'number' && p > 0.92);
+      jobState.video = { stage: finalizing ? 'finalizing' : 'rendering', status: statusText, queueId: q.queue_id };
+      busy.video = (p == null || p <= 0.02) ? true : p; nav.refresh();
+    });
     const a = addAsset({ kind: 'video', dataUrl: url, prompt: f.prompt.trim(), model: id, modelName: modelName(id), ext: 'mp4' });
     recent.video.unshift(a);
     toast('Video ready', 'ok');
@@ -667,6 +754,7 @@ function viewAudio() {
   const scroll = el('div', { class: 'scroll' });
   const pad = el('div', { class: 'pad pad-b' });
   scroll.appendChild(pad); frag.appendChild(scroll);
+  appendActivityDock(frag, 'audio');
 
   if (mode === 'music') buildMusic(pad);
   else if (mode === 'speech') buildSpeech(pad);
@@ -739,9 +827,15 @@ function buildSpeech(pad) {
   form.appendChild(field('Format', chips(['mp3', 'opus', 'aac', 'flac', 'wav'], f.format, v => { f.format = v; nav.refresh(); })));
   form.appendChild(field('Speed', slider(0.25, 4, 0.05, f.speed, v => { f.speed = v; updateVal(form, 'sp', v.toFixed(2) + '×'); }), null, f.speed.toFixed(2) + '×')); markVal(form, 'sp');
   form.appendChild(field('Language (optional)', (() => { const i = el('input', { type: 'text', placeholder: 'e.g. en, English, ja', value: f.lang }); i.addEventListener('input', e => f.lang = e.target.value); return i; })()));
-  if (o.supportsPrompt) form.appendChild(field('Style direction', (() => { const i = el('input', { type: 'text', placeholder: 'e.g. Very happy. Excited.', value: f.style }); i.addEventListener('input', e => f.style = e.target.value); return i; })()));
-  if (o.supportsTemperature) { form.appendChild(field('Temperature', slider(0, 2, 0.05, f.temperature, v => { f.temperature = v; updateVal(form, 'tm', v.toFixed(2)); }), null, f.temperature.toFixed(2))); markVal(form, 'tm'); }
   pad.appendChild(form);
+  const speechAdvanced = [];
+  if (o.supportsPrompt) speechAdvanced.push(field('Style direction', (() => { const i = el('input', { type: 'text', placeholder: 'e.g. Very happy. Excited.', value: f.style }); i.addEventListener('input', e => f.style = e.target.value); return i; })()));
+  if (o.supportsTemperature) speechAdvanced.push(field('Temperature', slider(0, 2, 0.05, f.temperature, v => { f.temperature = v; updateVal(speechAdv, 'tm', v.toFixed(2)); }), null, f.temperature.toFixed(2)));
+  if (o.supportsTopP) speechAdvanced.push(field('Top P', slider(0, 1, 0.05, f.topP, v => { f.topP = v; updateVal(speechAdv, 'tp', v.toFixed(2)); }), null, f.topP.toFixed(2)));
+  const speechAdv = advancedPanel('Voice tuning', speechAdvanced, f.advanced, open => f.advanced = open);
+  if (o.supportsTemperature) markVal(speechAdv, 'tm');
+  if (o.supportsTopP) markVal(speechAdv, 'tp');
+  if (speechAdvanced.length) pad.appendChild(speechAdv);
 
   pad.appendChild(resultsBlock('audio'));
   pad.appendChild(generateBar(busy.audio ? 'Synthesising…' : 'Generate speech', 'volume', () => runJob('audio', async () => {
@@ -782,7 +876,8 @@ function buildTranscribe(pad) {
     el('div', { class: 'panel-title', html: `${icon('type', 13)} Transcript` }),
     el('div', { style: { fontSize: '14px', lineHeight: '1.6', whiteSpace: 'pre-wrap', color: 'var(--text)' }, text: f.text }),
     el('div', { class: 'result-actions' }, [
-      el('button', { class: 'act', html: `${icon('copy', 14)} Copy`, onclick: () => { navigator.clipboard?.writeText(f.text); toast('Copied', 'ok'); } }),
+      el('button', { class: 'act', html: `${icon('copy', 14)} Copy`, onclick: () => copyText(f.text) }),
+      el('button', { class: 'act', html: `${icon('download', 14)} Download`, onclick: () => downloadText(f.text, 'vgpt-transcript.txt') }),
       el('button', { class: 'act', html: `${icon('chat', 14)} Send to chat`, onclick: () => { newChat(); chat.messages.push({ role: 'user', content: f.text, display: f.text }); nav.goTo('chat'); runChat(); } }),
     ]),
   ]));
@@ -828,7 +923,7 @@ function openAsset(a) {
 }
 
 // helpers to update a slider's value label without full re-render
-function markVal(form, key) { const f = form.querySelector('.field:last-child .val'); if (f) f.dataset.k = key; }
+function markVal(form, key) { const f = Array.from(form.querySelectorAll('.val')).find(n => !n.dataset.k); if (f) f.dataset.k = key; }
 function updateVal(form, key, text) { const node = Array.from(form.querySelectorAll('.val')).find(n => n.dataset.k === key); if (node) node.textContent = text; }
 
 // header pill context for the current tool/mode

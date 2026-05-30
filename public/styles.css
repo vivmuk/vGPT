@@ -375,3 +375,82 @@ input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border: none; b
   .gallery { grid-template-columns: repeat(3, 1fr); }
   .scroll .pad { max-width: 720px; margin: 0 auto; width: 100%; }
 }
+
+/* compact workspace + progressive disclosure -------------------------------- */
+.advanced-panel { padding: 0; overflow: hidden; }
+.advanced-panel > summary { list-style: none; display: flex; align-items: center; gap: 8px; padding: 11px 13px; color: var(--text-2); font-size: 12px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; cursor: pointer; }
+.advanced-panel > summary::-webkit-details-marker { display: none; }
+.advanced-panel > summary svg:last-child { margin-left: auto; transition: transform .18s ease; }
+.advanced-panel[open] > summary svg:last-child { transform: rotate(180deg); }
+.advanced-body { padding: 2px 13px 13px; border-top: 1px solid var(--border); }
+.advanced-body .field:first-child { margin-top: 12px; }
+.composer-options { display: flex; align-items: center; gap: 8px; padding: 7px 9px 0; color: var(--text-3); font-size: 10px; font-weight: 700; letter-spacing: .7px; text-transform: uppercase; overflow-x: auto; }
+.composer-options .chips { flex-wrap: nowrap; gap: 5px; }
+.composer-options .chip { padding: 4px 8px; font-size: 10px; }
+.msg-actions { display: flex; gap: 7px; margin-top: 9px; }
+.msg-actions .act { padding: 5px 8px; font-size: 11px; opacity: .78; }
+.msg-actions .act:hover { opacity: 1; color: var(--accent); border-color: var(--accent); }
+.job-card { padding: 14px; }
+.job-head { display: flex; align-items: center; gap: 11px; margin-bottom: 13px; }
+.job-card .lp { color: var(--text); font-size: 13px; font-weight: 700; }
+.job-card .ls { color: var(--text-3); font-size: 11px; margin-top: 3px; }
+.job-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-bottom: 12px; }
+.job-step { display: flex; flex-direction: column; gap: 5px; color: var(--text-dim); font-size: 9.5px; line-height: 1.25; }
+.job-dot { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; border: 1px solid var(--border-strong); background: rgba(0,0,0,.2); }
+.job-step.done, .job-step.active { color: var(--text-2); }
+.job-step.done .job-dot { color: var(--bg); background: var(--c-enhance); border-color: var(--c-enhance); }
+.job-step.active .job-dot { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 12px -2px var(--accent); }
+.job-step.active .job-dot::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.job-card .progress { max-width: none; }
+
+@media (max-width: 719px) {
+  :root { --header-h: 52px; --nav-h: 60px; --radius: 16px; }
+  .app-header { padding: 5px 10px; }
+  .brand-sub { display: none; }
+  .brand-mark { width: 30px; height: 30px; border-radius: 9px; }
+  .header-pill { padding: 6px 9px; max-width: 42vw; font-size: 11px; }
+  .icon-btn { width: 36px; height: 36px; }
+  .tool-head { padding: 10px 12px 2px; }
+  .tool-title { font-size: 18px; gap: 8px; }
+  .tool-title .glyph { width: 26px; height: 26px; }
+  .tool-desc { font-size: 11px; margin-top: 2px; }
+  .segmented { gap: 5px; padding: 7px 12px 2px; }
+  .seg { padding: 7px 10px; font-size: 11px; gap: 5px; }
+  .pad { padding: 10px 12px; }
+  .card { padding: 12px; }
+  .card + .card { margin-top: 9px; }
+  .field { margin-bottom: 10px; }
+  .label { margin-bottom: 5px; font-size: 11.5px; }
+  textarea, input[type=text], input[type=password], input[type=number], select { padding: 9px 10px; border-radius: 10px; font-size: 13px; }
+  textarea { min-height: 62px; }
+  .chips { gap: 5px; }
+  .chip { padding: 6px 9px; font-size: 11px; }
+  .notice { padding: 9px 11px; font-size: 11.5px; }
+  .model-select { padding: 10px 12px !important; }
+  .result-card { margin-bottom: 10px; }
+  .result-meta { padding: 9px 11px; }
+  .act { padding: 6px 8px; font-size: 11px; }
+  .msg { gap: 8px; padding: 10px 12px; }
+  .msg .av { width: 26px; height: 26px; }
+  .msg .content { font-size: 13.5px; line-height: 1.55; }
+  .empty { min-height: 54vh; padding: 26px 20px; }
+  .empty .orb { width: 68px; height: 68px; border-radius: 20px; margin-bottom: 8px; }
+  .nav button { font-size: 9px; }
+  .nav button svg { width: 19px; height: 19px; }
+}
+
+/* persistent generation feedback -------------------------------------------- */
+.activity-dock { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-top: 1px solid var(--border); background: rgba(11,13,24,.92); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); box-shadow: 0 -10px 24px rgba(0,0,0,.2); }
+.activity-icon { width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center; flex: none; color: var(--accent); background: var(--accent-soft); border: 1px solid var(--border); animation: activityGlow 1.6s ease-in-out infinite; }
+.activity-body { flex: 1; min-width: 0; }
+.activity-title { color: var(--text); font-size: 11.5px; font-weight: 700; }
+.activity-sub { color: var(--text-3); font-size: 10px; margin: 2px 0 5px; }
+.activity-dock .progress { max-width: none; height: 3px; }
+.activity-pct { color: var(--accent); font-family: var(--font-mono); font-size: 11px; font-weight: 700; }
+.activity-pulse { width: 9px; height: 9px; flex: none; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); animation: activityPulse 1.25s ease-in-out infinite; }
+.progress.indeterminate > i { width: 38%; animation: progressSlide 1.3s ease-in-out infinite; }
+.job-progress { width: 100%; display: flex; align-items: center; gap: 9px; color: var(--accent); font-family: var(--font-mono); font-size: 10px; font-weight: 700; }
+.job-progress .progress { flex: 1; }
+@keyframes progressSlide { from { transform: translateX(-115%); } to { transform: translateX(300%); } }
+@keyframes activityPulse { 0%, 100% { opacity: .45; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.08); } }
+@keyframes activityGlow { 0%, 100% { box-shadow: 0 0 0 transparent; } 50% { box-shadow: 0 0 16px -5px var(--accent); } }
