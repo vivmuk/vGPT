@@ -33,6 +33,25 @@ const busy = {};                                      // view -> bool|number(pro
 const jobState = {};                                  // async job lifecycle for progress UI
 let chat = { messages: [], streaming: false, abort: null };
 let libSel = 0;                                        // library jog selection
+let micRec = null;                                     // active MediaRecorder (chat dictation)
+
+// animated "inference happening" indicator for an LCD (equalizer bars + caret)
+function workingLine(text = 'PROCESSING') {
+  return el('div', { class: 'work' }, [
+    el('span', { class: 'eq' }, [el('i'), el('i'), el('i'), el('i'), el('i')]),
+    el('span', { class: 'wt', text }),
+  ]);
+}
+function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(blob); });
+}
+// prefer an xAI / Grok speech-to-text model, else the selected/first ASR model
+function pickAsrModel() {
+  const list = modelsByType('asr');
+  if (!list.length) return '';
+  const xai = list.find(m => /xai|grok/i.test(m.id) || /xai|grok/i.test(m.model_spec?.name || ''));
+  return (xai || findModel(selectedFor('asr')) || list[0]).id;
+}
 
 // ── DIAL widgets ──────────────────────────────────────────────────────────────
 
@@ -321,6 +340,8 @@ function viewChat() {
   }
   lcd.appendChild(out);
 
+  if (micRec) lcd.appendChild(workingLine('RECORDING'));
+  else if (busy.chatMic) lcd.appendChild(workingLine('TRANSCRIBING'));
   if (F.chat.atts.length) lcd.appendChild(el('div', { class: 'input-hint', text: `▌ ${F.chat.atts.length} image${F.chat.atts.length > 1 ? 's' : ''} attached` }));
 
   // pinned editable input line
@@ -352,23 +373,48 @@ function viewChat() {
     keys.push(el('button', { class: 'key' + (F.chat.effort ? ' lit' : ''), html: `${icon('brain', 18)}<div class="kt">THINK</div>`, onclick: () => { const i = opts.indexOf(F.chat.effort); F.chat.effort = opts[(i + 1) % opts.length]; toast(`Reasoning: ${F.chat.effort || 'auto'}`); nav.refresh(); } }));
   }
   if (caps.vision) keys.push(el('button', { class: 'key', html: `${icon('paperclip', 18)}<div class="kt">ATTACH</div>`, onclick: async () => { const d = await pickImage({ title: 'Attach image' }); if (d) { F.chat.atts.push(d); nav.refresh(); } } }));
-  keys.push(el('button', { class: 'key', html: `${icon('mic', 18)}<div class="kt">MIC</div>`, onclick: micDictate }));
+  keys.push(el('button', { class: 'key' + (micRec ? ' lit' : ''), html: `${icon('mic', 18)}<div class="kt">${micRec ? 'STOP' : busy.chatMic ? '···' : 'MIC'}</div>`, onclick: micDictate }));
   keys.push(el('button', { class: 'key big', html: `${icon(chat.streaming ? 'x' : 'send', 18)}<div class="kt">${chat.streaming ? 'STOP' : 'SEND'}</div>`, onclick: () => chat.streaming ? stopChat() : send() }));
 
   frag.appendChild(el('div', { class: 'keys' }, el('div', { class: 'keyrow' }, keys)));
   return frag;
 }
 
-function micDictate() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { toast('Voice input is not supported on this device', 'err'); return; }
-  const rec = new SR();
-  rec.lang = navigator.language || 'en-US';
-  rec.interimResults = false;
-  toast('Listening…');
-  rec.onresult = (e) => { const t = e.results[0][0].transcript; F.chat.draft = ((F.chat.draft || '') + ' ' + t).trim(); nav.refresh(); setTimeout(() => document.getElementById('chatInput')?.focus(), 0); };
-  rec.onerror = () => toast('Could not capture audio', 'err');
-  try { rec.start(); } catch { toast('Mic is busy', 'err'); }
+// MIC = record audio (MediaRecorder) then transcribe with Venice's STT model.
+// More reliable than the browser SpeechRecognition API and runs through the
+// same Venice /api/audio/transcriptions proxy the Transcribe tool uses.
+async function micDictate() {
+  if (micRec) { try { micRec.stop(); } catch {} return; }   // tap again to stop
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') { toast('Voice input is not supported on this device', 'err'); return; }
+  if (!modelsByType('asr').length) { toast('No speech-to-text model available with this key', 'err'); return; }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch { toast('Microphone permission denied', 'err'); return; }
+  const chunks = [];
+  let rec; try { rec = new MediaRecorder(stream); } catch { rec = new MediaRecorder(stream, {}); }
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  rec.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    micRec = null; busy.chatMic = true; nav.refresh();
+    try {
+      if (!guardQuery()) return;
+      const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+      const ext = (rec.mimeType || '').includes('mp4') ? 'mp4' : (rec.mimeType || '').includes('ogg') ? 'ogg' : 'webm';
+      const dataUrl = await blobToDataURL(blob);
+      const model = pickAsrModel();
+      const body = { audio: dataUrl, filename: `mic.${ext}`, response_format: 'json' };
+      if (model) body.model = model;
+      const res = await api.transcribe(body);
+      let text = res.text || res || ''; if (typeof text !== 'string') text = JSON.stringify(text);
+      F.chat.draft = ((F.chat.draft || '') + ' ' + String(text).trim()).trim();
+      if (!String(text).trim()) toast('No speech detected', 'err');
+    } catch (e) { toast(e.message || 'Transcription failed', 'err'); }
+    finally { busy.chatMic = false; nav.refresh(); setTimeout(() => document.getElementById('chatInput')?.focus(), 0); }
+  };
+  micRec = rec;
+  try { rec.start(); } catch { micRec = null; stream.getTracks().forEach(t => t.stop()); toast('Mic is busy', 'err'); return; }
+  toast('Recording… tap MIC to stop', '');
+  nav.refresh();
 }
 
 function renderMsg(msg) {
@@ -496,11 +542,12 @@ function buildGenerate(pad) {
   const lcd = el('div', { class: 'lcd' }, [
     el('div', { class: 'ltop' }, [
       el('button', { class: 'lt-l tap', onclick: () => nav.openModelPicker('image'), html: `${icon('cpu', 11)}<span>IMG · ${escapeHtml(modelName(id).toUpperCase())}</span>` }),
-      el('span', { class: 'armed', text: busy.image ? '● WORKING' : '● ARMED' }),
+      el('span', { class: 'armed' + (busy.image ? ' live' : ''), text: busy.image ? '● WORKING' : '● ARMED' }),
     ]),
     lcdText(null, f.prompt, '> describe the image…', v => { f.prompt = v; }, { max: o.promptLimit || 7500 }),
     o.isDiffusion ? lcdText('NEGATIVE', f.negative, 'what to avoid (optional)…', v => { f.negative = v; }, { dim: true }) : null,
     sub,
+    busy.image ? workingLine('GENERATING') : null,
   ]);
   pad.appendChild(lcd);
 
@@ -585,10 +632,11 @@ function buildEdit(pad) {
   const lcd = el('div', { class: 'lcd' }, [
     el('div', { class: 'ltop' }, [
       el('button', { class: 'lt-l tap', onclick: () => nav.openModelPicker('inpaint'), html: `${icon('cpu', 11)}<span>EDIT · ${escapeHtml(modelName(id).toUpperCase())}</span>` }),
-      el('span', { class: 'armed', text: busy.image ? '● WORKING' : '● ARMED' }),
+      el('span', { class: 'armed' + (busy.image ? ' live' : ''), text: busy.image ? '● WORKING' : '● ARMED' }),
     ]),
     lcdText(null, f.prompt, '> change the sky to a sunrise…', v => { f.prompt = v; }, { max: o.promptLimit || 32768 }),
     el('div', { class: 'sub', text: maxImgs > 1 ? `up to ${maxImgs} tapes · first is the base` : 'single tape edit' }),
+    busy.image ? workingLine('EDITING') : null,
   ]);
   pad.appendChild(lcd);
 
@@ -705,12 +753,12 @@ function viewVideo() {
   const lcd = el('div', { class: 'lcd' }, [
     el('div', { class: 'ltop' }, [
       el('button', { class: 'lt-l tap', onclick: () => nav.openModelPicker('video'), html: `${icon('cpu', 11)}<span>VID · ${escapeHtml(modelName(id).toUpperCase())}</span>` }),
-      el('span', { class: 'armed', text: statusR }),
+      el('span', { class: 'armed' + (busy.video ? ' live' : ''), text: statusR }),
     ]),
     lcdText(null, f.prompt, o.needsImage ? '> describe the motion and camera…' : '> describe the scene, motion and style…', v => { f.prompt = v; }, { max: o.promptLimit }),
     el('div', { class: 'sub', text: `${o.modelType.replace(/-/g, ' ')} · ${durVal}${o.audio ? ' · audio' : ''}${f.quote != null ? ' · est ' + fmtUSD(f.quote) : ''}` }),
   ]);
-  if (busy.video) lcd.appendChild(el('div', { class: 'progress', style: { marginTop: '8px' } }, el('i', { style: { width: (prog != null ? Math.round(prog * 100) : 8) + '%' } })));
+  if (busy.video) { lcd.appendChild(workingLine(jobState.video?.stage === 'queued' ? 'QUEUED' : 'RENDERING')); lcd.appendChild(el('div', { class: 'progress', style: { marginTop: '8px' } }, el('i', { style: { width: (prog != null ? Math.round(prog * 100) : 8) + '%' } }))); }
   pad.appendChild(lcd);
 
   if (o.allowsImage) pad.appendChild(tapeSlot(f.image, d => { f.image = d; f.quote = null; nav.refresh(); }, () => { f.image = null; nav.refresh(); }, o.needsImage ? 'source image (required)' : 'source image (optional)'));
@@ -801,10 +849,11 @@ function buildMusic(pad) {
   pad.appendChild(el('div', { class: 'lcd' }, [
     el('div', { class: 'ltop' }, [
       el('button', { class: 'lt-l tap', onclick: () => nav.openModelPicker('music'), html: `${icon('cpu', 11)}<span>MUS · ${escapeHtml(modelName(id).toUpperCase())}</span>` }),
-      el('span', { class: 'armed', text: busy.audio ? '● WORKING' : '● ARMED' }),
+      el('span', { class: 'armed' + (busy.audio ? ' live' : ''), text: busy.audio ? '● WORKING' : '● ARMED' }),
     ]),
     lcdText(null, f.prompt, '> genre, mood, instruments, tempo…', v => { f.prompt = v; }, { max: o.promptLimit || 2000 }),
     o.minPromptLength > 1 ? el('div', { class: 'sub', text: `min ${o.minPromptLength} chars` }) : null,
+    busy.audio ? workingLine('COMPOSING') : null,
   ]));
 
   const bank = el('div', { class: 'bank' });
@@ -863,10 +912,11 @@ function buildSpeech(pad) {
   pad.appendChild(el('div', { class: 'lcd' }, [
     el('div', { class: 'ltop' }, [
       el('button', { class: 'lt-l tap', onclick: () => nav.openModelPicker('tts'), html: `${icon('cpu', 11)}<span>VOX · ${escapeHtml(modelName(id).toUpperCase())}</span>` }),
-      el('span', { class: 'armed', text: busy.audio ? '● WORKING' : '● ARMED' }),
+      el('span', { class: 'armed' + (busy.audio ? ' live' : ''), text: busy.audio ? '● WORKING' : '● ARMED' }),
     ]),
     lcdText(null, f.text, '> type what you want spoken…', v => { f.text = v; }, { max: 4096 }),
     el('div', { class: 'sub', text: 'up to 4096 characters' }),
+    busy.audio ? workingLine('SYNTHESISING') : null,
   ]));
 
   const bank = el('div', { class: 'bank' });
@@ -911,11 +961,11 @@ function buildTranscribe(pad) {
   pad.appendChild(el('div', { class: 'lcd tall' }, [
     el('div', { class: 'ltop' }, [
       hasModel ? el('button', { class: 'lt-l tap', onclick: () => nav.openModelPicker('asr'), html: `${icon('cpu', 11)}<span>ASR · ${escapeHtml((modelName(id) || 'auto').toUpperCase())}</span>` }) : el('span', { class: 'lt-l', text: 'ASR · TRANSCRIBE' }),
-      el('span', { class: 'armed', text: busy.audio ? '● WORKING' : f.text ? '● DONE' : '● ARMED' }),
+      el('span', { class: 'armed' + (busy.audio ? ' live' : ''), text: busy.audio ? '● WORKING' : f.text ? '● DONE' : '● ARMED' }),
     ]),
-    el('div', { class: 'lcd-scroll' }, f.text
+    el('div', { class: 'lcd-scroll' }, busy.audio ? workingLine('TRANSCRIBING') : (f.text
       ? el('div', { class: 'ca', text: f.text })
-      : el('div', { class: 'ca', html: '◆ load an audio or video tape below, then press TRANSCRIBE.' })),
+      : el('div', { class: 'ca', html: '◆ load an audio or video tape below, then press TRANSCRIBE.' }))),
   ]));
 
   // tape slot for audio file
