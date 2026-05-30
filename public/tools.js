@@ -1,11 +1,14 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// vGPT tools — one view per capability. Every form is built from the selected
-// model's advertised constraints/capabilities, and every request payload only
-// includes parameters that model supports (clamped to its ranges). This keeps
-// the app correct as Venice adds new models with new parameter shapes.
+// vGPT tools — DIAL edition. One capability-driven view per feature, now
+// presented as a hardware instrument: knobs (sliders), switches (toggles),
+// segments (enums), an LCD readout, tape slots (file inputs), transport keys
+// (chat) and a jog dial (library). The capability gating and request-payload
+// building are UNCHANGED from the original — only the controls' presentation
+// differs. Every parameter that rendered before still renders, gated by the
+// same model-capability checks; knobs write the same field a slider did.
 // ═══════════════════════════════════════════════════════════════════════════
 import {
-  el, icon, toast, clear, mdToHtml, fileToDataURL, fmtUSD, downloadDataUrl,
+  el, icon, toast, clear, mdToHtml, escapeHtml, fileToDataURL, fmtUSD, downloadDataUrl,
   state, api, nav, guardQuery,
   modelsByType, findModel, modelName, selectedFor,
   imageOpts, editOpts, videoOpts, musicOpts, ttsOpts, textCaps,
@@ -15,81 +18,159 @@ import {
 
 // per-view form state (kept across re-renders within a session)
 const F = {
-  chat: { atts: [], webSearch: 'auto', effort: '' },
-  imgGen: { prompt: '', negative: '', ratio: '16:9', resolution: '', quality: '', steps: null, cfg: 5, style: '', variants: 1, seed: '', format: 'webp', hideWm: false, advanced: false },
+  chat: { atts: [], webSearch: 'auto', effort: '', draft: '' },
+  imgGen: { prompt: '', negative: '', ratio: '16:9', resolution: '', quality: '', steps: null, cfg: 5, style: '', variants: 1, seed: '', format: 'webp', hideWm: false },
   edit: { prompt: '', images: [], ratio: 'auto', resolution: '', quality: '', format: '' },
   enhance: { image: null, scale: 2, enhance: true, creativity: 0.5, replication: 0.35, prompt: '' },
   bg: { image: null },
   video: { prompt: '', negative: '', duration: '', ratio: '', resolution: '', audio: true, image: null, endImage: null, quote: null },
   music: { prompt: '', lyrics: '', optimizer: false, instrumental: false, voice: '', lang: '', duration: null, speed: null, quote: null },
-  speech: { text: '', voice: '', format: 'mp3', speed: 1, lang: '', style: '', temperature: 0.7, topP: 1, advanced: false },
+  speech: { text: '', voice: '', format: 'mp3', speed: 1, lang: '', style: '', temperature: 0.7, topP: 1 },
   transcribe: { audio: null, filename: '', text: '', language: '' },
 };
 const recent = { image: [], video: [], audio: [] }; // inline results per view
-const busy = {};                                      // view -> bool
+const busy = {};                                      // view -> bool|number(progress)
 const jobState = {};                                  // async job lifecycle for progress UI
 let chat = { messages: [], streaming: false, abort: null };
+let libSel = 0;                                        // library jog selection
 
-// ── small control builders ──────────────────────────────────────────────────
-function field(label, control, hint, valText) {
-  return el('div', { class: 'field' }, [
-    label ? el('div', { class: 'label' }, [el('span', { text: label }), valText != null ? el('span', { class: 'val', text: valText }) : null]) : null,
-    control,
-    hint ? el('div', { class: 'hint', text: hint }) : null,
-  ]);
-}
-function textarea(value, placeholder, oninput, attrs = {}) {
-  const t = el('textarea', { placeholder, ...attrs });
-  t.value = value || '';
-  t.addEventListener('input', e => oninput(e.target.value));
-  return t;
-}
-function chips(options, value, onPick, labels) {
-  const wrap = el('div', { class: 'chips' });
-  options.forEach(opt => {
-    const c = el('button', { class: 'chip' + (String(opt) === String(value) ? ' active' : ''), text: labels ? labels(opt) : String(opt) });
-    c.addEventListener('click', () => onPick(opt));
-    wrap.appendChild(c);
+// ── DIAL widgets ──────────────────────────────────────────────────────────────
+
+// Rotary knob bound to a numeric field. Drag (up = increase) or scroll-wheel to
+// change; optional onClick fires on a tap without drag (used for SEED randomize).
+function knob({ label, value, min, max, step = 1, fmt, display, onInput, onClick }) {
+  const SWEEP = 135;                 // degrees each way (270° total)
+  const range = (max - min) || 1;
+  const clampSnap = (v) => {
+    v = Math.min(max, Math.max(min, v));
+    if (step) v = Math.round((v - min) / step) * step + min;
+    return Math.min(max, Math.max(min, +(+v).toFixed(6)));
+  };
+  let cur = clampSnap(value ?? min);
+  const ind = el('div', { class: 'ind' });
+  const cap = el('div', { class: 'knob' }, ind);
+  const valEl = el('div', { class: 'kv' });
+  const paint = () => {
+    const frac = (cur - min) / range;
+    ind.style.transform = `translateX(-50%) rotate(${-SWEEP + frac * 2 * SWEEP}deg)`;
+    valEl.textContent = display ? display(cur) : (fmt ? fmt(cur) : String(cur));
+  };
+  paint();
+  let startY = 0, startVal = 0, moved = false, active = false;
+  const move = (e) => {
+    if (!active) return;
+    const y = e.clientY ?? (e.touches && e.touches[0].clientY) ?? 0;
+    const dy = startY - y;
+    if (Math.abs(dy) > 3) moved = true;
+    cur = clampSnap(startVal + (dy / 150) * range);
+    paint(); onInput && onInput(cur);
+  };
+  const up = () => {
+    if (!active) return; active = false;
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    if (!moved && onClick) { onClick(); paint(); }
+  };
+  cap.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); active = true; moved = false; startY = e.clientY; startVal = cur;
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   });
-  return wrap;
+  cap.addEventListener('wheel', (e) => { e.preventDefault(); cur = clampSnap(cur + (e.deltaY < 0 ? step : -step)); paint(); onInput && onInput(cur); }, { passive: false });
+  return el('div', { class: 'kw' }, [cap, el('div', { class: 'kl', text: label }), valEl]);
 }
-function slider(min, max, step, value, oninput) {
-  const s = el('input', { type: 'range', min, max, step });
-  s.value = value;
-  s.addEventListener('input', e => oninput(parseFloat(e.target.value)));
-  return s;
-}
-function toggle(value, onToggle) {
-  const track = el('div', { class: 'switch-track' + (value ? ' on' : '') }, el('div', { class: 'switch-knob' }));
-  track.addEventListener('click', () => onToggle(!value));
-  return track;
-}
-function switchRow(label, value, onToggle, hint) {
-  return el('div', { class: 'field' }, [
-    el('div', { class: 'switch' }, [
-      el('div', {}, [el('div', { class: 'label', style: { marginBottom: hint ? '2px' : '0' } }, el('span', { text: label })), hint ? el('div', { class: 'hint', text: hint }) : null]),
-      toggle(value, onToggle),
-    ]),
-  ]);
-}
-function select(options, value, onChange, labels) {
-  const s = el('select');
-  options.forEach(o => {
-    const opt = el('option', { value: String(o), text: labels ? labels(o) : String(o) });
-    if (String(o) === String(value)) opt.selected = true;
-    s.appendChild(opt);
+
+// Knob that steps through a list of discrete options (e.g. durations).
+function enumKnob(label, options, value, onPick, fmt) {
+  const opts = options.map(String);
+  let idx = Math.max(0, opts.indexOf(String(value)));
+  return knob({
+    label, value: idx, min: 0, max: Math.max(0, opts.length - 1), step: 1,
+    display: () => { const o = options[idx]; return fmt ? fmt(o) : String(o); },
+    onInput: (v) => { idx = Math.round(v); onPick(options[idx]); },
   });
-  s.addEventListener('change', e => onChange(e.target.value));
-  return s;
 }
-function advancedPanel(title, children, open = false, onToggle) {
-  const panel = el('details', { class: 'advanced-panel card', open }, [
-    el('summary', { html: `${icon('sliders', 14)}<span>${title}</span>${icon('chevronDown', 15)}` }),
-    el('div', { class: 'advanced-body' }, children),
+
+function dialSwitch(label, value, onToggle) {
+  const sw = el('div', { class: 'sw' + (value ? ' on' : '') }, [
+    el('span', { class: 'sl', text: label }),
+    el('span', { class: 'tg' }, el('i')),
   ]);
-  if (onToggle) panel.addEventListener('toggle', () => onToggle(panel.open));
-  return panel;
+  sw.addEventListener('click', () => { const nv = !sw.classList.contains('on'); sw.classList.toggle('on', nv); onToggle(nv); });
+  return sw;
 }
+
+function segment(label, options, value, onPick, fmt) {
+  return el('div', { class: 'seg-field' }, [
+    label ? el('div', { class: 'seg-label', text: label }) : null,
+    el('div', { class: 'segrow' }, options.map(o =>
+      el('button', { class: 'segbtn' + (String(o) === String(value) ? ' on' : ''), text: fmt ? fmt(o) : String(o), onclick: () => onPick(o) }))),
+  ]);
+}
+
+function cartBtn(kicker, value, onClick, glyph = 'cpu') {
+  return el('button', { class: 'cart-btn', onclick: onClick }, [
+    el('span', { class: 'ci', html: icon(glyph, 16) }),
+    el('div', { class: 'cc' }, [el('div', { class: 'ck', text: kicker }), el('div', { class: 'cv', text: value })]),
+    el('span', { class: 'cx', html: icon('chevronDown', 16) }),
+  ]);
+}
+
+// editable LCD text line (prompt / negative / lyrics / text)
+function lcdText(label, value, placeholder, oninput, { dim, max, rows } = {}) {
+  const ta = el('textarea', { placeholder, rows: rows || 2 });
+  if (max) ta.setAttribute('maxlength', max);
+  ta.value = value || '';
+  const grow = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+  ta.addEventListener('input', (e) => { grow(); oninput(e.target.value); });
+  requestAnimationFrame(grow);
+  return el('div', { class: 'lcd-field' + (dim ? ' dim' : '') }, [
+    label ? el('span', { class: 'lf-label', text: label }) : null, ta,
+  ]);
+}
+
+// REC / generate cluster
+function recButton({ label, sub, glyph = 'zap', onClick, disabled, pulsing }) {
+  return el('div', { class: 'gen' }, [
+    el('button', { class: 'recbtn' + (pulsing ? ' pulsing' : ''), disabled, html: icon(glyph, 24), onclick: onClick }),
+    el('div', { class: 'gt' }, [el('b', { text: label }), sub ? el('span', { class: 'gc', html: sub }) : null]),
+  ]);
+}
+
+// tape slot — single image input styled as an LCD-glass dashed well
+function tapeSlot(current, onPick, onClear, label = 'tape slot') {
+  if (current) {
+    return el('div', { class: 'tape-thumb' }, [el('img', { src: current }), el('button', { class: 'thumb-x', html: icon('x', 16), onclick: onClear })]);
+  }
+  return el('button', { class: 'tape-slot', onclick: async () => { const d = await pickImage({ title: 'Insert tape' }); if (d) onPick(d); } }, [
+    el('span', { class: 'ts-ic', html: icon('image', 28) }),
+    el('span', { text: label.toUpperCase() }),
+    el('span', { class: 'ts-sub', text: 'tap to load · upload / camera / library' }),
+  ]);
+}
+
+// a choice picked from a (possibly large) list, surfaced as a cartridge sheet
+function openChoiceSheet(title, options, current, onPick, fmt) {
+  const body = el('div', {});
+  const listEl = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } });
+  const draw = (q = '') => {
+    clear(listEl);
+    const ql = q.toLowerCase();
+    options.filter(o => !ql || String(fmt ? fmt(o) : o).toLowerCase().includes(ql)).forEach(o => {
+      const sel = String(o) === String(current);
+      listEl.appendChild(el('button', { class: 'model-item' + (sel ? ' sel' : ''), onclick: () => { onPick(o); nav.closeSheet(); nav.refresh(); } }, [
+        el('div', { class: 'mi-body' }, el('div', { class: 'mi-name', text: fmt ? fmt(o) : String(o) })),
+        sel ? el('span', { style: { color: 'var(--accent)' }, html: icon('check', 16) }) : null,
+      ]));
+    });
+    if (!listEl.children.length) listEl.appendChild(el('div', { class: 'notice', text: 'No matches.' }));
+  };
+  if (options.length > 8) { const s = el('input', { type: 'search', class: 'search-input', placeholder: `Search ${options.length}…` }); s.addEventListener('input', e => draw(e.target.value)); body.appendChild(s); }
+  draw('');
+  body.appendChild(listEl);
+  nav.openSheet(title, body);
+}
+
+// ── shared helpers (unchanged behaviour) ───────────────────────────────────────
 function copyText(text) {
   if (!text) return;
   const write = navigator.clipboard?.writeText(text);
@@ -102,115 +183,8 @@ function downloadText(text, filename = 'vgpt-response.txt') {
   downloadDataUrl(url, filename);
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
-function appendActivityDock(parent, view) {
-  const dock = activityDock(view);
-  if (dock) parent.appendChild(dock);
-}
-function activityDock(view) {
-  const isChat = view === 'chat';
-  const active = isChat ? chat.streaming : busy[view];
-  if (!active) return null;
-  const progress = typeof active === 'number' ? Math.max(0.02, Math.min(0.99, active)) : null;
-  const pct = progress == null ? null : Math.round(progress * 100);
-  const labels = { chat: 'vGPT is writing', image: 'Creating image', video: 'Generating video', audio: 'Generating audio' };
-  const sub = view === 'video' ? (jobState.video?.status || jobState.video?.stage || 'preparing') : pct != null ? `${pct}% complete` : 'Generation in progress';
-  return el('div', { class: 'activity-dock', role: 'status', 'aria-live': 'polite' }, [
-    el('div', { class: 'activity-icon', html: icon(view === 'chat' ? 'sparkles' : view === 'image' ? 'image' : view === 'video' ? 'video' : 'music', 15) }),
-    el('div', { class: 'activity-body' }, [
-      el('div', { class: 'activity-title', text: labels[view] }),
-      el('div', { class: 'activity-sub', text: String(sub).replace(/_/g, ' ').toLowerCase() }),
-      el('div', { class: `progress ${pct == null ? 'indeterminate' : ''}` }, el('i', { style: pct == null ? {} : { width: pct + '%' } })),
-    ]),
-    pct != null ? el('div', { class: 'activity-pct', text: pct + '%' }) : el('div', { class: 'activity-pulse' }),
-  ]);
-}
-function generateBar(label, accentIcon, onClick, disabled, priceNote) {
-  return el('div', { class: 'generate-bar' }, [
-    priceNote ? el('div', { class: 'hint', style: { textAlign: 'center', marginBottom: '8px' }, html: priceNote }) : null,
-    el('button', { class: 'btn primary full', disabled, html: `${icon(accentIcon, 18)} ${label}`, onclick: onClick }),
-  ]);
-}
-function videoProgressCard(progress) {
-  const js = jobState.video || { stage: 'preparing' };
-  const stages = [
-    ['preparing', 'Preparing request'],
-    ['queued', 'Queued with Venice'],
-    ['rendering', 'Rendering frames'],
-    ['finalizing', 'Finalizing media'],
-  ];
-  const active = Math.max(0, stages.findIndex(([key]) => key === js.stage));
-  return el('div', { class: 'card job-card' }, [
-    el('div', { class: 'job-head' }, [el('div', { class: 'spinner sm' }), el('div', {}, [
-      el('div', { class: 'lp', text: js.stage === 'queued' ? 'Your video is queued' : js.stage === 'finalizing' ? 'Finalizing your video…' : 'Rendering your video…' }),
-      el('div', { class: 'ls', text: js.status ? String(js.status).replace(/_/g, ' ').toLowerCase() : 'Keep this screen open while Venice creates your clip.' }),
-    ])]),
-    el('div', { class: 'job-steps' }, stages.map(([key, label], i) => el('div', { class: `job-step ${i < active ? 'done' : i === active ? 'active' : ''}` }, [
-      el('span', { class: 'job-dot', html: i < active ? icon('check', 11) : '' }),
-      el('span', { text: label }),
-    ]))),
-    el('div', { class: 'job-progress' }, [
-      el('div', { class: 'progress' }, el('i', { style: { width: Math.round((typeof progress === 'number' ? progress : 0.06) * 100) + '%' } })),
-      el('span', { text: Math.round((typeof progress === 'number' ? progress : 0.06) * 100) + '%' }),
-    ]),
-  ]);
-}
-function loadingCard(primary, sub, progress) {
-  return el('div', { class: 'card loading-card' }, [
-    el('div', { class: 'spinner' }),
-    el('div', { class: 'lp', text: primary }),
-    sub ? el('div', { class: 'ls', text: sub }) : null,
-    progress != null ? el('div', { class: 'job-progress' }, [el('div', { class: 'progress' }, el('i', { style: { width: Math.round(progress * 100) + '%' } })), el('span', { text: Math.round(progress * 100) + '%' })]) : null,
-  ]);
-}
-const ACCENT2 = { '--c-chat': '#ff8a4c', '--c-image': '#ffce4c', '--c-edit': '#ff8a4c', '--c-enhance': '#21d4fd', '--c-video': '#21d4fd', '--c-music': '#4b8bff', '--c-voice': '#21d4fd', '--c-library': '#ff8ad0' };
-function setAccent(v) {
-  const root = document.documentElement.style;
-  root.setProperty('--accent', `var(${v})`);
-  root.setProperty('--accent-2', ACCENT2[v] || `var(${v})`);
-}
-function toolHead(glyph, accentVar, title, desc) {
-  setAccent(accentVar);
-  return el('div', { class: 'tool-head' }, [
-    el('div', { class: 'tool-title' }, [el('span', { class: 'glyph', html: icon(glyph, 18) }), title]),
-    desc ? el('div', { class: 'tool-desc', text: desc }) : null,
-  ]);
-}
 
-// model selector button (opens picker for a given type)
-function modelButton(type, accentVar) {
-  const id = selectedFor(type);
-  const m = findModel(id);
-  return el('button', { class: 'card', style: { display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left', width: '100%', padding: '13px 15px' }, onclick: () => nav.openModelPicker(type) }, [
-    el('div', { class: 'glyph', style: { width: '34px', height: '34px', borderRadius: '10px', display: 'grid', placeItems: 'center', background: 'var(--accent-soft)', color: 'var(--accent)', flex: 'none' }, html: icon('cpu', 18) }),
-    el('div', { style: { flex: '1', minWidth: '0' } }, [
-      el('div', { style: { fontSize: '10px', fontWeight: '700', letterSpacing: '1px', textTransform: 'uppercase', color: 'var(--text-3)' }, text: 'Model' }),
-      el('div', { style: { fontSize: '15px', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, text: m ? modelName(id) : (modelsByType(type).length ? 'Select…' : 'None available') }),
-    ]),
-    el('span', { style: { color: 'var(--text-3)' }, html: icon('chevronDown', 18) }),
-  ]);
-}
-
-// image source control (single)
-function imageSource(current, onPick, onClear, label = 'Source image') {
-  if (current) {
-    return el('div', { class: 'field' }, [
-      el('div', { class: 'label' }, el('span', { text: label })),
-      el('div', { class: 'thumb-wrap' }, [
-        el('img', { src: current }),
-        el('button', { class: 'thumb-x', html: icon('x', 16), onclick: onClear }),
-      ]),
-    ]);
-  }
-  return el('div', { class: 'field' }, [
-    el('div', { class: 'label' }, el('span', { text: label })),
-    el('button', { class: 'source', style: { width: '100%' }, onclick: async () => { const d = await pickImage(); if (d) onPick(d); } }, [
-      el('span', { style: { color: 'var(--accent)' }, html: icon('image', 26) }),
-      el('div', { text: 'Tap to upload, capture, or pick from your library' }),
-    ]),
-  ]);
-}
-
-// result card with chaining actions
+// result card with chaining actions (preserved — library + inline results)
 function resultCard(asset) {
   let media;
   if (asset.kind === 'image') media = el('img', { class: 'result-media img', src: asset.dataUrl });
@@ -232,7 +206,7 @@ function resultCard(asset) {
     media,
     el('div', { class: 'result-meta' }, [
       asset.prompt ? el('div', { class: 'result-prompt', text: asset.prompt }) : null,
-      el('div', { style: { fontSize: '11px', color: 'var(--text-3)', marginTop: '6px', fontFamily: 'var(--font-mono)' }, text: [asset.modelName || asset.model, asset.bytes ? (asset.bytes / 1024 | 0) + ' KB' : ''].filter(Boolean).join(' · ') }),
+      el('div', { style: { fontSize: '11px', color: 'var(--ink-2)', marginTop: '6px', fontFamily: 'var(--mono)' }, text: [asset.modelName || asset.model, asset.bytes ? (asset.bytes / 1024 | 0) + ' KB' : ''].filter(Boolean).join(' · ') }),
       acts,
     ]),
   ]);
@@ -248,12 +222,63 @@ async function shareAsset(asset, name) {
   downloadDataUrl(asset.dataUrl, name);
 }
 
-function emptyState(glyph, title, desc) {
+function emptyState(glyph, title, desc, extra) {
   return el('div', { class: 'empty' }, [
     el('div', { class: 'orb', html: icon(glyph, 38) }),
     el('h2', { text: title }),
     el('p', { text: desc }),
+    extra || null,
   ]);
+}
+
+// inline result/loading area below a bank (progress preserved)
+function resultsBlock(view) {
+  const out = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } });
+  if (busy[view]) {
+    const prog = busy[view] === true ? null : busy[view];
+    if (view === 'video') out.appendChild(videoProgressCard(prog));
+    else out.appendChild(loadingCard(
+      view === 'audio' ? 'Composing audio…' : 'Generating…',
+      view === 'audio' ? 'This can take 1–3 minutes. Keep this screen open.' : 'Usually a few seconds.',
+      typeof prog === 'number' ? prog : (view === 'audio' ? 0.06 : null),
+    ));
+  }
+  recent[view].forEach(a => out.appendChild(resultCard(a)));
+  return out;
+}
+function videoProgressCard(progress) {
+  const js = jobState.video || { stage: 'preparing' };
+  const stages = [['preparing', 'Preparing request'], ['queued', 'Queued with Venice'], ['rendering', 'Rendering frames'], ['finalizing', 'Finalizing media']];
+  const active = Math.max(0, stages.findIndex(([key]) => key === js.stage));
+  return el('div', { class: 'card job-card' }, [
+    el('div', { class: 'job-head' }, [el('div', { class: 'spinner sm' }), el('div', {}, [
+      el('div', { class: 'lp', text: js.stage === 'queued' ? 'Your video is queued' : js.stage === 'finalizing' ? 'Finalizing your video…' : 'Rendering your video…' }),
+      el('div', { class: 'ls', text: js.status ? String(js.status).replace(/_/g, ' ').toLowerCase() : 'Keep this screen open while Venice creates your clip.' }),
+    ])]),
+    el('div', { class: 'job-steps' }, stages.map(([key, label], i) => el('div', { class: `job-step ${i < active ? 'done' : i === active ? 'active' : ''}` }, [
+      el('span', { class: 'job-dot', html: i < active ? icon('check', 11) : '' }), el('span', { text: label }),
+    ]))),
+    el('div', { class: 'job-progress' }, [
+      el('div', { class: 'progress' }, el('i', { style: { width: Math.round((typeof progress === 'number' ? progress : 0.06) * 100) + '%' } })),
+      el('span', { text: Math.round((typeof progress === 'number' ? progress : 0.06) * 100) + '%' }),
+    ]),
+  ]);
+}
+function loadingCard(primary, sub, progress) {
+  return el('div', { class: 'card loading-card' }, [
+    el('div', { class: 'spinner' }),
+    el('div', { class: 'lp', text: primary }),
+    sub ? el('div', { class: 'ls', text: sub }) : null,
+    progress != null ? el('div', { class: 'job-progress' }, [el('div', { class: 'progress' }, el('i', { style: { width: Math.round(progress * 100) + '%' } })), el('span', { text: Math.round(progress * 100) + '%' })]) : null,
+  ]);
+}
+
+// scroll body scaffold (plate is the global header)
+function toolScroll() {
+  const scroll = el('div', { class: 'scroll' });
+  const pad = el('div', { class: 'pad pad-b' });
+  scroll.appendChild(pad);
+  return { scroll, pad };
 }
 
 // consume cross-tool handoff (preload an image into the destination tool)
@@ -271,113 +296,109 @@ async function runJob(view, fn) {
 
 // ════════════════════════════ CHAT ════════════════════════════
 function viewChat() {
-  setAccent('--c-chat');
+  const frag = document.createDocumentFragment();
   const id = selectedFor('text');
   const m = findModel(id);
   const caps = textCaps(m);
 
-  const frag = document.createDocumentFragment();
-  const scroll = el('div', { class: 'scroll' });
+  const h = takeHandoff(); if (h?.image && caps.vision) F.chat.atts.push(h.image);
 
+  const lcd = el('div', { class: 'lcd tall' });
+  const webOn = caps.webSearch && F.chat.webSearch !== 'off';
+  lcd.appendChild(el('div', { class: 'ltop' }, [
+    el('button', { class: 'lt-l tap', onclick: () => nav.openModelPicker('text'), html: `${icon('cpu', 11)}<span>CHAT · ${escapeHtml((modelName(id) || 'no model').toUpperCase())}</span>` }),
+    el('span', { text: `${webOn ? 'WEB ● ' : ''}${F.chat.effort ? 'THINK ' + F.chat.effort.toUpperCase() : ''}`.trim() || 'READY' }),
+  ]));
+
+  const out = el('div', { class: 'lcd-scroll' });
   if (!chat.messages.length) {
-    const sugg = [
-      { i: 'cpu', t: 'Explain quantum computing simply' },
-      { i: 'type', t: 'Write a launch tweet for my app' },
-      { i: 'globe', t: 'Plan a 3-day trip to Tokyo' },
-      { i: 'sparkles', t: 'Brainstorm 10 startup ideas in climate tech' },
-    ];
-    scroll.appendChild(el('div', { class: 'empty' }, [
-      el('div', { class: 'orb', html: icon('chat', 38) }),
-      el('h2', { text: 'Ask vGPT anything' }),
-      el('p', { text: caps.vision ? 'Chat, reason, search the web, or attach an image to ask about it.' : 'Chat, reason, and search the web with Venice models.' }),
-      el('div', { class: 'suggestions' }, sugg.map(s => el('button', { class: 'suggestion', html: `${icon(s.i, 17)}<span></span>`, onclick: () => { const ta = $composer(); ta.value = s.t; ta.dispatchEvent(new Event('input')); ta.focus(); } }, []))),
-    ]));
-    // fill suggestion text safely
-    setTimeout(() => scroll.querySelectorAll('.suggestion span').forEach((sp, i) => sp.textContent = sugg[i].t), 0);
+    out.appendChild(el('div', { class: 'ca', html: `◆ ${escapeHtml(caps.vision ? 'turn the dial, type below, or hold MIC. attach an image to ask about it.' : 'turn the dial and type below — i can reason and search the web.')}` }));
+    const sugg = ['Explain quantum computing simply', 'Write a launch tweet for my app', 'Plan a 3-day trip to Tokyo', 'Brainstorm 10 climate-tech ideas'];
+    out.appendChild(el('div', { style: { marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px' } },
+      sugg.map(s => el('button', { class: 'lrow', onclick: () => { F.chat.draft = s; nav.refresh(); setTimeout(() => document.getElementById('chatInput')?.focus(), 0); } }, [el('span', { class: 'lt', text: '»' }), el('span', { class: 'ln', text: s })]))));
   } else {
-    const list = el('div', { class: 'chat-list' });
-    chat.messages.forEach(msg => list.appendChild(renderMsg(msg)));
-    scroll.appendChild(list);
+    chat.messages.forEach(msg => out.appendChild(renderMsg(msg)));
   }
+  lcd.appendChild(out);
 
-  // composer
-  const atts = el('div', { class: 'composer-atts' });
-  F.chat.atts.forEach((u, i) => atts.appendChild(el('div', { class: 'ca' }, [
-    el('img', { src: u }), el('button', { class: 'ca-x', html: icon('x', 12), onclick: () => { F.chat.atts.splice(i, 1); nav.refresh(); } }),
-  ])));
+  if (F.chat.atts.length) lcd.appendChild(el('div', { class: 'input-hint', text: `▌ ${F.chat.atts.length} image${F.chat.atts.length > 1 ? 's' : ''} attached` }));
 
-  const ta = el('textarea', { placeholder: 'Message vGPT…', rows: '1', id: 'chatInput' });
-  ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(130, ta.scrollHeight) + 'px'; });
-  ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !matchMedia('(pointer:coarse)').matches) { e.preventDefault(); send(); } });
+  // pinned editable input line
+  const input = el('textarea', { id: 'chatInput', rows: '1', placeholder: '▌ type or hold MIC…', style: { width: '100%', background: 'transparent', border: 0, resize: 'none', fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--amb)', caretColor: 'var(--accent)', boxShadow: 'none', padding: 0, marginTop: '8px', borderTop: '1px dashed rgba(134,229,140,.18)', paddingTop: '8px' } });
+  input.value = F.chat.draft || '';
+  const grow = () => { input.style.height = 'auto'; input.style.height = Math.min(120, input.scrollHeight) + 'px'; };
+  input.addEventListener('input', () => { F.chat.draft = input.value; grow(); });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !matchMedia('(pointer:coarse)').matches) { e.preventDefault(); send(); } });
+  requestAnimationFrame(grow);
+  lcd.appendChild(input);
+  frag.appendChild(lcd);
 
-  const attachBtn = caps.vision ? el('button', { class: 'cbtn', html: icon('paperclip', 20), title: 'Attach image', onclick: async () => { const d = await pickImage({ title: 'Attach image' }); if (d) { F.chat.atts.push(d); nav.refresh(); } } }) : null;
-  const webBtn = caps.webSearch ? el('button', { class: 'cbtn', style: F.chat.webSearch !== 'off' ? { color: 'var(--c-chat)', background: 'var(--accent-soft)' } : {}, html: icon('globe', 20), title: `Web search: ${F.chat.webSearch}`, onclick: () => { F.chat.webSearch = F.chat.webSearch === 'off' ? 'auto' : F.chat.webSearch === 'auto' ? 'on' : 'off'; toast(`Web search: ${F.chat.webSearch}`); nav.refresh(); } }) : null;
-  const sendBtn = el('button', { class: 'cbtn send', html: chat.streaming ? icon('x', 18) : icon('send', 18), onclick: () => chat.streaming ? stopChat() : send() });
-
-  const composer = el('div', { class: 'composer' }, [
-    caps.reasoningEffort ? el('div', { class: 'composer-options' }, [
-      el('span', { text: 'Reasoning' }),
-      chips(['', ...(caps.effortOptions || ['low', 'medium', 'high'])], F.chat.effort, v => { F.chat.effort = v; nav.refresh(); }, v => v || 'Auto'),
-    ]) : null,
-    F.chat.atts.length ? atts : null,
-    el('div', { class: 'composer-inner' }, [attachBtn, ta, webBtn, sendBtn].filter(Boolean)),
-  ]);
-
-  function $composer() { return ta; }
   function send() {
-    const text = ta.value.trim();
+    const text = (F.chat.draft || '').trim();
     if ((!text && !F.chat.atts.length) || chat.streaming) return;
     const content = F.chat.atts.length
       ? [...(text ? [{ type: 'text', text }] : []), ...F.chat.atts.map(u => ({ type: 'image_url', image_url: { url: u } }))]
       : text;
     chat.messages.push({ role: 'user', content, atts: [...F.chat.atts], display: text });
-    F.chat.atts = [];
-    ta.value = ''; ta.style.height = 'auto';
+    F.chat.atts = []; F.chat.draft = '';
     runChat();
   }
 
-  frag.appendChild(scroll);
-  appendActivityDock(frag, 'chat');
-  frag.appendChild(composer);
+  // transport keys
+  const keys = [];
+  if (caps.webSearch) keys.push(el('button', { class: 'key' + (webOn ? ' lit' : ''), html: `${icon('globe', 18)}<div class="kt">WEB</div>`, onclick: () => { F.chat.webSearch = F.chat.webSearch === 'off' ? 'auto' : F.chat.webSearch === 'auto' ? 'on' : 'off'; toast(`Web search: ${F.chat.webSearch}`); nav.refresh(); } }));
+  if (caps.reasoningEffort) {
+    const opts = ['', ...(caps.effortOptions || ['low', 'medium', 'high'])];
+    keys.push(el('button', { class: 'key' + (F.chat.effort ? ' lit' : ''), html: `${icon('brain', 18)}<div class="kt">THINK</div>`, onclick: () => { const i = opts.indexOf(F.chat.effort); F.chat.effort = opts[(i + 1) % opts.length]; toast(`Reasoning: ${F.chat.effort || 'auto'}`); nav.refresh(); } }));
+  }
+  if (caps.vision) keys.push(el('button', { class: 'key', html: `${icon('paperclip', 18)}<div class="kt">ATTACH</div>`, onclick: async () => { const d = await pickImage({ title: 'Attach image' }); if (d) { F.chat.atts.push(d); nav.refresh(); } } }));
+  keys.push(el('button', { class: 'key', html: `${icon('mic', 18)}<div class="kt">MIC</div>`, onclick: micDictate }));
+  keys.push(el('button', { class: 'key big', html: `${icon(chat.streaming ? 'x' : 'send', 18)}<div class="kt">${chat.streaming ? 'STOP' : 'SEND'}</div>`, onclick: () => chat.streaming ? stopChat() : send() }));
+
+  frag.appendChild(el('div', { class: 'keys' }, el('div', { class: 'keyrow' }, keys)));
   return frag;
+}
+
+function micDictate() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { toast('Voice input is not supported on this device', 'err'); return; }
+  const rec = new SR();
+  rec.lang = navigator.language || 'en-US';
+  rec.interimResults = false;
+  toast('Listening…');
+  rec.onresult = (e) => { const t = e.results[0][0].transcript; F.chat.draft = ((F.chat.draft || '') + ' ' + t).trim(); nav.refresh(); setTimeout(() => document.getElementById('chatInput')?.focus(), 0); };
+  rec.onerror = () => toast('Could not capture audio', 'err');
+  try { rec.start(); } catch { toast('Mic is busy', 'err'); }
 }
 
 function renderMsg(msg) {
   const isUser = msg.role === 'user';
-  const body = el('div', { class: 'body' });
-  body.appendChild(el('div', { class: 'who', text: isUser ? 'You' : 'vGPT' }));
-  if (isUser && msg.atts?.length) {
-    const a = el('div', { class: 'att' });
-    msg.atts.forEach(u => a.appendChild(el('img', { src: u })));
-    body.appendChild(a);
+  if (isUser) {
+    const wrap = el('div', {});
+    if (msg.atts?.length) wrap.appendChild(el('div', { class: 'cu', text: `> [${msg.atts.length} image${msg.atts.length > 1 ? 's' : ''}]` }));
+    const txt = msg.display ?? (typeof msg.content === 'string' ? msg.content : '');
+    if (txt) wrap.appendChild(el('div', { class: 'cu', html: `&gt; ${escapeHtml(txt)}` }));
+    return wrap;
   }
-  if (!isUser && msg.streaming && !msg.content) {
-    body.appendChild(el('div', { class: 'typing' }, [el('i'), el('i'), el('i')]));
-  } else {
-    const txt = isUser ? (msg.display ?? (typeof msg.content === 'string' ? msg.content : '')) : msg.content;
-    body.appendChild(el('div', { class: 'content', html: isUser ? mdToHtml(txt) : mdToHtml(txt || '') }));
-  }
-  if (!isUser && msg.reasoning) {
-    body.appendChild(el('details', { class: 'reasoning' }, [
-      el('summary', { html: `${icon('sparkles', 14)} Reasoning` }),
-      el('div', { class: 'r-body', text: msg.reasoning }),
+  const wrap = el('div', {});
+  if (msg.streaming && !msg.content) wrap.appendChild(el('div', { class: 'ca', html: '◆ <span style="opacity:.6">▌</span>' }));
+  else wrap.appendChild(el('div', { class: 'ca', html: `◆ ${mdToHtml(msg.content || '')}` }));
+  if (msg.reasoning) wrap.appendChild(el('details', { class: 'reasoning' }, [el('summary', { text: '› reasoning' }), el('div', { class: 'r-body', text: msg.reasoning })]));
+  if (!msg.streaming && msg.content) {
+    wrap.appendChild(el('div', { class: 'msg-actions' }, [
+      el('button', { class: 'act', html: `${icon('copy', 13)} Copy`, onclick: () => copyText(msg.content) }),
+      el('button', { class: 'act', html: `${icon('download', 13)} Save`, onclick: () => downloadText(msg.content) }),
     ]));
   }
-  if (!isUser && !msg.streaming && msg.content) {
-    body.appendChild(el('div', { class: 'msg-actions' }, [
-      el('button', { class: 'act', html: `${icon('copy', 14)} Copy`, onclick: () => copyText(msg.content) }),
-      el('button', { class: 'act', html: `${icon('download', 14)} Download`, onclick: () => downloadText(msg.content) }),
-    ]));
-  }
-  if (!isUser && msg.metrics) {
+  if (msg.metrics) {
     const mt = msg.metrics;
-    body.appendChild(el('div', { class: 'metrics' }, [
+    wrap.appendChild(el('div', { class: 'metrics' }, [
       mt.tps ? el('span', { class: 'm', text: `${mt.tps} tok/s` }) : null,
       mt.total ? el('span', { class: 'm', text: `${mt.total} tokens` }) : null,
       mt.cost ? el('span', { class: 'm', text: fmtUSD(mt.cost) }) : null,
     ].filter(Boolean)));
   }
-  return el('div', { class: `msg ${msg.role}` }, [el('div', { class: 'av', html: icon(isUser ? 'type' : 'sparkles', 15) }), body]);
+  return wrap;
 }
 
 async function runChat() {
@@ -409,7 +430,6 @@ async function runChat() {
       onReasoning: (r) => { assistant.reasoning = (assistant.reasoning || '') + r; },
       onUsage: (u) => { usage = u; },
     });
-    // strip <think> blocks if present
     const think = /<think>([\s\S]*?)<\/think>/gi; let mtc;
     while ((mtc = think.exec(assistant.content))) assistant.reasoning = (assistant.reasoning || '') + mtc[1].trim() + '\n';
     assistant.content = assistant.content.replace(think, '').trim();
@@ -442,21 +462,16 @@ const IMAGE_MODES = [
   { k: 'generate', label: 'Generate', icon: 'image' },
   { k: 'edit', label: 'Edit', icon: 'wand' },
   { k: 'enhance', label: 'Enhance', icon: 'upscale' },
-  { k: 'bg', label: 'Remove BG', icon: 'scissors' },
+  { k: 'bg', label: 'Cutout', icon: 'scissors' },
 ];
 function viewImage() {
-  setAccent('--c-image');
   const mode = state.mode.image || 'generate';
   const frag = document.createDocumentFragment();
-  frag.appendChild(toolHead('image', '--c-image', 'Image Studio', 'Create, edit, upscale and cut out — then chain into video.'));
   frag.appendChild(el('div', { class: 'segmented' }, IMAGE_MODES.map(mm =>
-    el('button', { class: 'seg' + (mode === mm.k ? ' active' : ''), html: `${icon(mm.icon, 15)} ${mm.label}`, onclick: () => { state.mode.image = mm.k; nav.refresh(); } })
+    el('button', { class: 'seg' + (mode === mm.k ? ' active' : ''), html: `${icon(mm.icon, 14)} ${mm.label}`, onclick: () => { state.mode.image = mm.k; nav.refresh(); } })
   )));
-  const scroll = el('div', { class: 'scroll' });
-  const pad = el('div', { class: 'pad pad-b' });
-  scroll.appendChild(pad);
+  const { scroll, pad } = toolScroll();
   frag.appendChild(scroll);
-  appendActivityDock(frag, 'image');
 
   if (mode === 'generate') buildGenerate(pad);
   else if (mode === 'edit') buildEdit(pad);
@@ -465,83 +480,79 @@ function viewImage() {
   return frag;
 }
 
-function resultsBlock(view) {
-  const out = el('div', {});
-  if (busy[view]) {
-    const prog = busy[view] === true ? null : busy[view];
-    if (view === 'video') out.appendChild(videoProgressCard(prog));
-    else out.appendChild(loadingCard(
-      view === 'video' ? 'Rendering your video…' : view === 'audio' ? 'Composing audio…' : 'Generating…',
-      view === 'video' || view === 'audio' ? 'This can take 1–3 minutes. Keep this screen open.' : 'Usually a few seconds.',
-      typeof prog === 'number' ? prog : (view === 'audio' ? 0.06 : null),
-    ));
-  }
-  recent[view].forEach(a => out.appendChild(resultCard(a)));
-  return out;
-}
-
 function buildGenerate(pad) {
   const id = selectedFor('image');
   const m = findModel(id);
   if (!m) { pad.appendChild(emptyState('image', 'No image models', 'Add a Venice API key to load image models.')); return; }
   const o = imageOpts(m);
   const f = F.imgGen;
-  setAccent('--c-image');
 
-  pad.appendChild(modelButton('image', '--c-image'));
-  const form = el('div', { class: 'card' });
-  form.appendChild(field('Prompt', textarea(f.prompt, 'Describe the image you want…', v => f.prompt = v, { maxlength: o.promptLimit || 7500 }), o.promptLimit ? `Up to ${o.promptLimit} characters` : null));
-
-  // sizing — aspect_ratio (+resolution) if model uses them, else width/height presets
   const ratios = o.aspectRatios || WH_RATIOS;
-  form.appendChild(field('Aspect ratio', chips(ratios, o.aspectRatios ? (ratios.includes(f.ratio) ? f.ratio : (o.defaultAspectRatio || ratios[0])) : f.ratio, v => { f.ratio = v; nav.refresh(); })));
-  if (o.resolutions) {
-    const rv = o.resolutions.includes(f.resolution) ? f.resolution : (o.defaultResolution || o.resolutions[0]);
-    form.appendChild(field('Resolution', chips(o.resolutions, rv, v => { f.resolution = v; nav.refresh(); })));
-  }
-  if (o.qualities) {
-    const qv = o.qualities.includes(f.quality) ? f.quality : (o.defaultQuality || o.qualities[0]);
-    form.appendChild(field('Quality', chips(o.qualities, qv, v => { f.quality = v; nav.refresh(); })));
-  }
-  if (o.steps) {
-    const sv = f.steps ?? o.steps.default ?? 8;
-    form.appendChild(field('Steps', slider(1, o.steps.max || 50, 1, Math.min(sv, o.steps.max || 50), v => { f.steps = v; updateVal(form, 'steps', v); }), null, String(Math.min(sv, o.steps.max || 50))));
-    markVal(form, 'steps');
-  }
-  if (o.isDiffusion) {
-    form.appendChild(field('Guidance (CFG)', slider(1, 20, 0.5, f.cfg, v => { f.cfg = v; updateVal(form, 'cfg', v.toFixed(1)); }), null, f.cfg.toFixed(1)));
-    markVal(form, 'cfg');
-    form.appendChild(field('Negative prompt', textarea(f.negative, 'What to avoid (optional)…', v => f.negative = v)));
-  }
-  pad.appendChild(form);
+  const ratioVal = o.aspectRatios ? (ratios.includes(f.ratio) ? f.ratio : (o.defaultAspectRatio || ratios[0])) : (WH_RATIOS.includes(f.ratio) ? f.ratio : '1:1');
+  const summaryText = () => `${ratioVal}${o.resolutions ? ' · ' + (o.resolutions.includes(f.resolution) ? f.resolution : (o.defaultResolution || o.resolutions[0])) : ''} · ${f.format} · ${f.variants > 1 ? f.variants + ' variants' : '1 image'}`;
 
-  // advanced (style, variants, seed, format)
-  const advBody = [];
+  // ── LCD: model · armed · prompt · summary ──
+  const sub = el('div', { class: 'sub', text: summaryText() });
+  const lcd = el('div', { class: 'lcd' }, [
+    el('div', { class: 'ltop' }, [
+      el('button', { class: 'lt-l tap', onclick: () => nav.openModelPicker('image'), html: `${icon('cpu', 11)}<span>IMG · ${escapeHtml(modelName(id).toUpperCase())}</span>` }),
+      el('span', { class: 'armed', text: busy.image ? '● WORKING' : '● ARMED' }),
+    ]),
+    lcdText(null, f.prompt, '> describe the image…', v => { f.prompt = v; }, { max: o.promptLimit || 7500 }),
+    o.isDiffusion ? lcdText('NEGATIVE', f.negative, 'what to avoid (optional)…', v => { f.negative = v; }, { dim: true }) : null,
+    sub,
+  ]);
+  pad.appendChild(lcd);
+
+  // ── parameter bank ──
+  const bank = el('div', { class: 'bank' });
+  bank.appendChild(el('div', { class: 'bank-t', text: 'parameter bank' }));
+
+  const knobs = [];
+  if (o.steps) knobs.push(knob({ label: 'STEPS', value: Math.min(f.steps ?? o.steps.default ?? 8, o.steps.max || 50), min: 1, max: o.steps.max || 50, step: 1, onInput: v => f.steps = v }));
+  if (o.isDiffusion) knobs.push(knob({ label: 'CFG', value: f.cfg, min: 1, max: 20, step: 0.5, fmt: v => v.toFixed(1), onInput: v => f.cfg = v }));
+  knobs.push(knob({ label: 'VARIANTS', value: f.variants, min: 1, max: 4, step: 1, onInput: v => { f.variants = v; sub.textContent = summaryText(); } }));
+  knobs.push(knob({ label: 'SEED', value: f.seed === '' ? 0 : +f.seed, min: 0, max: 999999, step: 1, display: () => f.seed === '' ? 'AUTO' : String(f.seed), onInput: v => f.seed = String(Math.round(v)), onClick: () => { f.seed = ''; toast('Seed → auto/random'); } }));
+  bank.appendChild(el('div', { class: 'knobs' }, knobs));
+
+  // segments (enums)
+  bank.appendChild(segment('ASPECT', ratios, ratioVal, v => { f.ratio = v; nav.refresh(); }));
+  if (o.resolutions) bank.appendChild(segment('RESOLUTION', o.resolutions, o.resolutions.includes(f.resolution) ? f.resolution : (o.defaultResolution || o.resolutions[0]), v => { f.resolution = v; nav.refresh(); }));
+  if (o.qualities) bank.appendChild(segment('QUALITY', o.qualities, o.qualities.includes(f.quality) ? f.quality : (o.defaultQuality || o.qualities[0]), v => { f.quality = v; nav.refresh(); }));
+  bank.appendChild(segment('FORMAT', ['webp', 'png', 'jpeg'], f.format, v => { f.format = v; nav.refresh(); }));
+
+  // style preset (large list) → cartridge sheet
   if (state.styles.length) {
-    advBody.push(field('Style preset', select(['', ...state.styles], f.style, v => f.style = v, o2 => o2 || 'None')));
+    bank.appendChild(cartBtn('STYLE PRESET', f.style || 'None', () => openChoiceSheet('Style cartridges', ['', ...state.styles], f.style, v => f.style = v, x => x || 'None'), 'sparkles'));
   }
-  advBody.push(field('Variants', chips([1, 2, 3, 4], f.variants, v => { f.variants = v; nav.refresh(); }), 'Generate multiple options at once'));
-  advBody.push(field('Output format', chips(['webp', 'png', 'jpeg'], f.format, v => { f.format = v; nav.refresh(); })));
-  advBody.push(field('Seed', (() => { const i = el('input', { type: 'number', placeholder: 'Random', value: f.seed }); i.addEventListener('input', e => f.seed = e.target.value); return i; })(), 'Reuse a seed for reproducible results'));
-  advBody.push(switchRow('Hide watermark', f.hideWm, v => { f.hideWm = v; nav.refresh(); }, 'Only applies when supported by the selected image model'));
-  pad.appendChild(advancedPanel('Advanced options', advBody, f.advanced, open => f.advanced = open));
 
-  pad.appendChild(resultsBlock('image'));
+  // switches
+  bank.appendChild(el('div', { class: 'switches' }, [dialSwitch('HIDE WMARK', f.hideWm, v => f.hideWm = v)]));
 
+  // results / progress
+  bank.appendChild(resultsBlock('image'));
+
+  // REC
   const price = priceHint(m);
-  pad.appendChild(generateBar(busy.image ? 'Generating…' : 'Generate image', 'zap', () => runJob('image', async () => {
-    if (!f.prompt.trim()) { toast('Enter a prompt', 'err'); throw new Error('Enter a prompt'); }
-    const body = buildGeneratePayload(m, o, f);
-    const res = await api.imageGenerate(body);
-    const imgs = res.images || (res.data || []).map(d => d.b64_json || d.url) || [];
-    if (!imgs.length) throw new Error('No image returned');
-    imgs.forEach(b64 => {
-      const dataUrl = b64.startsWith('data:') ? b64 : `data:image/${body.format || 'webp'};base64,${b64}`;
-      const a = addAsset({ kind: 'image', dataUrl, prompt: f.prompt.trim(), model: id, modelName: modelName(id), ext: body.format || 'webp' });
-      recent.image.unshift(a);
-    });
-    toast(`${imgs.length} image${imgs.length > 1 ? 's' : ''} ready`, 'ok');
-  }), busy.image, price != null ? `~${fmtUSD(price)} per image · model decides exact cost` : null));
+  bank.appendChild(recButton({
+    label: busy.image ? 'GENERATING…' : 'GENERATE', glyph: 'zap', disabled: !!busy.image, pulsing: !!busy.image,
+    sub: price != null ? `est ${fmtUSD(price)} · ~12s → library` : 'tap to render → library',
+    onClick: () => runJob('image', async () => {
+      if (!f.prompt.trim()) { toast('Enter a prompt', 'err'); throw new Error('Enter a prompt'); }
+      const body = buildGeneratePayload(m, o, f);
+      const res = await api.imageGenerate(body);
+      const imgs = res.images || (res.data || []).map(d => d.b64_json || d.url) || [];
+      if (!imgs.length) throw new Error('No image returned');
+      imgs.forEach(b64 => {
+        const dataUrl = b64.startsWith('data:') ? b64 : `data:image/${body.format || 'webp'};base64,${b64}`;
+        const a = addAsset({ kind: 'image', dataUrl, prompt: f.prompt.trim(), model: id, modelName: modelName(id), ext: body.format || 'webp' });
+        recent.image.unshift(a);
+      });
+      toast(`${imgs.length} image${imgs.length > 1 ? 's' : ''} ready`, 'ok');
+    }),
+  }));
+
+  pad.appendChild(bank);
 }
 function buildGeneratePayload(m, o, f) {
   const body = { model: m.id, prompt: f.prompt.trim(), format: f.format || 'webp' };
@@ -569,105 +580,116 @@ function buildEdit(pad) {
   if (!m) { pad.appendChild(emptyState('wand', 'No edit models', 'Add a Venice API key to load image-editing models.')); return; }
   const o = editOpts(m);
   const f = F.edit;
-
-  pad.appendChild(modelButton('inpaint', '--c-image'));
-
-  // images (1, or up to 3 if model supports combining)
   const maxImgs = o.combineImages ? 3 : 1;
-  const imgCard = el('div', { class: 'card' });
-  imgCard.appendChild(el('div', { class: 'panel-title', text: maxImgs > 1 ? `Images (up to ${maxImgs})` : 'Image' }));
-  const strip = el('div', { class: 'thumb-strip' });
-  f.images.forEach((u, i) => strip.appendChild(el('div', { class: 'mini' }, [el('img', { src: u }), el('button', { class: 'thumb-x', style: { width: '24px', height: '24px' }, html: icon('x', 13), onclick: () => { f.images.splice(i, 1); nav.refresh(); } })])));
-  if (f.images.length < maxImgs) strip.appendChild(el('button', { class: 'mini', style: { display: 'grid', placeItems: 'center', color: 'var(--accent)', background: 'var(--accent-soft)' }, html: icon('plus', 22), onclick: async () => { const d = await pickImage(); if (d) { f.images.push(d); nav.refresh(); } } }));
-  imgCard.appendChild(strip);
-  if (maxImgs > 1) imgCard.appendChild(el('div', { class: 'hint', text: 'First image is the base; extra images guide the edit (compositing).' }));
-  pad.appendChild(imgCard);
 
-  const form = el('div', { class: 'card' });
-  form.appendChild(field('Edit instructions', textarea(f.prompt, 'e.g. "change the sky to a sunrise", "add neon signs", "make it winter"…', v => f.prompt = v, { maxlength: o.promptLimit || 32768 })));
-  if (o.aspectRatios) form.appendChild(field('Aspect ratio', chips(o.aspectRatios, o.aspectRatios.includes(f.ratio) ? f.ratio : 'auto', v => { f.ratio = v; nav.refresh(); }), o.singleImageAspectRatio ? null : 'Single-image edits keep the input size; ignored unless combining.'));
-  if (o.resolutions) form.appendChild(field('Resolution', chips(o.resolutions, o.resolutions.includes(f.resolution) ? f.resolution : (o.defaultResolution || o.resolutions[0]), v => { f.resolution = v; nav.refresh(); })));
-  if (o.qualities) form.appendChild(field('Quality', chips(o.qualities, o.qualities.includes(f.quality) ? f.quality : (o.defaultQuality || o.qualities[0]), v => { f.quality = v; nav.refresh(); })));
-  form.appendChild(field('Output format', chips(['', 'png', 'jpeg', 'webp'], f.format, v => { f.format = v; nav.refresh(); }, x => x || 'Auto')));
-  pad.appendChild(form);
+  const lcd = el('div', { class: 'lcd' }, [
+    el('div', { class: 'ltop' }, [
+      el('button', { class: 'lt-l tap', onclick: () => nav.openModelPicker('inpaint'), html: `${icon('cpu', 11)}<span>EDIT · ${escapeHtml(modelName(id).toUpperCase())}</span>` }),
+      el('span', { class: 'armed', text: busy.image ? '● WORKING' : '● ARMED' }),
+    ]),
+    lcdText(null, f.prompt, '> change the sky to a sunrise…', v => { f.prompt = v; }, { max: o.promptLimit || 32768 }),
+    el('div', { class: 'sub', text: maxImgs > 1 ? `up to ${maxImgs} tapes · first is the base` : 'single tape edit' }),
+  ]);
+  pad.appendChild(lcd);
 
-  pad.appendChild(resultsBlock('image'));
-  pad.appendChild(generateBar(busy.image ? 'Editing…' : 'Apply edit', 'wand', () => runJob('image', async () => {
-    if (!f.images.length) throw new Error('Add an image to edit');
-    if (!f.prompt.trim()) throw new Error('Describe the edit');
-    const multi = f.images.length > 1;
-    const base = { prompt: f.prompt.trim() };
-    if (o.aspectRatios && f.ratio && f.ratio !== 'auto' && (multi || o.singleImageAspectRatio)) base.aspect_ratio = f.ratio;
-    if (o.resolutions && f.resolution) base.resolution = o.resolutions.includes(f.resolution) ? f.resolution : undefined;
-    if (o.qualities && f.quality) base.quality = o.qualities.includes(f.quality) ? f.quality : undefined;
-    if (f.format) base.output_format = f.format;
-    const res = multi
-      ? await api.imageMultiEdit({ ...base, modelId: id, images: f.images })
-      : await api.imageEdit({ ...base, model: id, image: f.images[0] });
-    if (!res.data) throw new Error('No image returned');
-    const a = addAsset({ kind: 'image', dataUrl: res.data, prompt: f.prompt.trim(), model: id, modelName: res.modelName || modelName(id), ext: 'png' });
-    recent.image.unshift(a);
-    toast('Edit complete', 'ok');
-  }), busy.image));
+  // tape strip (1..maxImgs)
+  const strip = el('div', { class: 'tape-strip' });
+  f.images.forEach((u, i) => strip.appendChild(el('div', { class: 'mini' }, [el('img', { src: u }), el('button', { class: 'thumb-x', html: icon('x', 13), onclick: () => { f.images.splice(i, 1); nav.refresh(); } })])));
+  if (f.images.length < maxImgs) strip.appendChild(el('button', { class: 'mini add', html: icon('plus', 22), onclick: async () => { const d = await pickImage(); if (d) { f.images.push(d); nav.refresh(); } } }));
+  pad.appendChild(strip);
+
+  const bank = el('div', { class: 'bank' });
+  bank.appendChild(el('div', { class: 'bank-t', text: 'edit bank' }));
+  if (o.aspectRatios) bank.appendChild(segment('ASPECT', o.aspectRatios, o.aspectRatios.includes(f.ratio) ? f.ratio : 'auto', v => { f.ratio = v; nav.refresh(); }));
+  if (o.resolutions) bank.appendChild(segment('RESOLUTION', o.resolutions, o.resolutions.includes(f.resolution) ? f.resolution : (o.defaultResolution || o.resolutions[0]), v => { f.resolution = v; nav.refresh(); }));
+  if (o.qualities) bank.appendChild(segment('QUALITY', o.qualities, o.qualities.includes(f.quality) ? f.quality : (o.defaultQuality || o.qualities[0]), v => { f.quality = v; nav.refresh(); }));
+  bank.appendChild(segment('FORMAT', ['', 'png', 'jpeg', 'webp'], f.format, v => { f.format = v; nav.refresh(); }, x => x || 'AUTO'));
+  bank.appendChild(resultsBlock('image'));
+  bank.appendChild(recButton({
+    label: busy.image ? 'EDITING…' : 'APPLY EDIT', glyph: 'wand', disabled: !!busy.image, pulsing: !!busy.image, sub: 'tap to render → library',
+    onClick: () => runJob('image', async () => {
+      if (!f.images.length) throw new Error('Add an image to edit');
+      if (!f.prompt.trim()) throw new Error('Describe the edit');
+      const multi = f.images.length > 1;
+      const base = { prompt: f.prompt.trim() };
+      if (o.aspectRatios && f.ratio && f.ratio !== 'auto' && (multi || o.singleImageAspectRatio)) base.aspect_ratio = f.ratio;
+      if (o.resolutions && f.resolution) base.resolution = o.resolutions.includes(f.resolution) ? f.resolution : undefined;
+      if (o.qualities && f.quality) base.quality = o.qualities.includes(f.quality) ? f.quality : undefined;
+      if (f.format) base.output_format = f.format;
+      const res = multi
+        ? await api.imageMultiEdit({ ...base, modelId: id, images: f.images })
+        : await api.imageEdit({ ...base, model: id, image: f.images[0] });
+      if (!res.data) throw new Error('No image returned');
+      const a = addAsset({ kind: 'image', dataUrl: res.data, prompt: f.prompt.trim(), model: id, modelName: res.modelName || modelName(id), ext: 'png' });
+      recent.image.unshift(a);
+      toast('Edit complete', 'ok');
+    }),
+  }));
+  pad.appendChild(bank);
 }
 
 function buildEnhance(pad) {
   const h = takeHandoff(); if (h?.image) F.enhance.image = h.image;
   const f = F.enhance;
-  pad.appendChild(el('div', { class: 'notice', html: `${icon('upscale', 14)} Upscale up to 4× and/or enhance detail with Venice's image engine. A scale of 1× runs the enhancer only.` }));
-  pad.appendChild(imageSource(f.image, d => { f.image = d; nav.refresh(); }, () => { f.image = null; nav.refresh(); }, 'Image to enhance'));
 
-  const form = el('div', { class: 'card' });
-  form.appendChild(field('Scale', chips([1, 2, 3, 4], f.scale, v => { f.scale = v; if (v === 1) f.enhance = true; nav.refresh(); }, x => x + '×'), f.scale === 1 ? 'At 1× the enhancer must be on.' : null));
-  form.appendChild(switchRow('Enhance detail', f.enhance, v => { if (f.scale === 1 && !v) { toast('Enhance is required at 1×'); return; } f.enhance = v; nav.refresh(); }, 'AI re-detailing pass'));
+  pad.appendChild(el('div', { class: 'notice', html: `${icon('upscale', 14)} Upscale up to 4× and/or re-detail with Venice's image engine. A scale of 1× runs the enhancer only.` }));
+  pad.appendChild(tapeSlot(f.image, d => { f.image = d; nav.refresh(); }, () => { f.image = null; nav.refresh(); }, 'image to enhance'));
+
+  const bank = el('div', { class: 'bank' });
+  bank.appendChild(el('div', { class: 'bank-t', text: 'enhance bank' }));
+  bank.appendChild(segment('SCALE', [1, 2, 3, 4], f.scale, v => { f.scale = +v; if (+v === 1) f.enhance = true; nav.refresh(); }, x => x + '×'));
   if (f.enhance) {
-    form.appendChild(field('Creativity', slider(0, 1, 0.05, f.creativity, v => { f.creativity = v; updateVal(form, 'cr', v.toFixed(2)); }), 'Higher = more reinterpretation', f.creativity.toFixed(2)));
-    markVal(form, 'cr');
-    form.appendChild(field('Replication', slider(0, 1, 0.05, f.replication, v => { f.replication = v; updateVal(form, 'rp', v.toFixed(2)); }), 'Higher preserves original lines/noise', f.replication.toFixed(2)));
-    markVal(form, 'rp');
-    form.appendChild(field('Enhance style (optional)', (() => { const i = el('input', { type: 'text', placeholder: 'e.g. gold, marble, cinematic', value: f.prompt }); i.addEventListener('input', e => f.prompt = e.target.value); return i; })()));
+    bank.appendChild(el('div', { class: 'knobs' }, [
+      knob({ label: 'CREATIVITY', value: f.creativity, min: 0, max: 1, step: 0.05, fmt: v => v.toFixed(2), onInput: v => f.creativity = v }),
+      knob({ label: 'REPLICATION', value: f.replication, min: 0, max: 1, step: 0.05, fmt: v => v.toFixed(2), onInput: v => f.replication = v }),
+    ]));
   }
-  pad.appendChild(form);
-
-  pad.appendChild(resultsBlock('image'));
-  pad.appendChild(generateBar(busy.image ? 'Enhancing…' : 'Enhance image', 'upscale', () => runJob('image', async () => {
-    if (!f.image) throw new Error('Add an image first');
-    const body = { image: f.image, scale: f.scale };
-    if (f.enhance || f.scale === 1) { body.enhance = true; body.enhanceCreativity = f.creativity; if (f.prompt.trim()) body.enhancePrompt = f.prompt.trim(); }
-    body.replication = f.replication;
-    const res = await api.upscale(body);
-    if (!res.data) throw new Error('No image returned');
-    const a = addAsset({ kind: 'image', dataUrl: res.data, prompt: `Enhanced ${f.scale}×`, model: 'upscale', modelName: `Upscale ${f.scale}×`, ext: 'png' });
-    recent.image.unshift(a);
-    toast('Enhanced', 'ok');
-  }), busy.image));
+  bank.appendChild(el('div', { class: 'switches' }, [dialSwitch('ENHANCE DETAIL', f.enhance, v => { if (f.scale === 1 && !v) { toast('Enhance is required at 1×'); nav.refresh(); return; } f.enhance = v; nav.refresh(); })]));
+  if (f.enhance) bank.appendChild(lcdText('ENHANCE STYLE (OPTIONAL)', f.prompt, 'e.g. gold, marble, cinematic', v => f.prompt = v, { dim: true }));
+  bank.appendChild(resultsBlock('image'));
+  bank.appendChild(recButton({
+    label: busy.image ? 'ENHANCING…' : 'ENHANCE', glyph: 'upscale', disabled: !!busy.image, pulsing: !!busy.image, sub: 'tap to render → library',
+    onClick: () => runJob('image', async () => {
+      if (!f.image) throw new Error('Add an image first');
+      const body = { image: f.image, scale: f.scale };
+      if (f.enhance || f.scale === 1) { body.enhance = true; body.enhanceCreativity = f.creativity; if (f.prompt.trim()) body.enhancePrompt = f.prompt.trim(); }
+      body.replication = f.replication;
+      const res = await api.upscale(body);
+      if (!res.data) throw new Error('No image returned');
+      const a = addAsset({ kind: 'image', dataUrl: res.data, prompt: `Enhanced ${f.scale}×`, model: 'upscale', modelName: `Upscale ${f.scale}×`, ext: 'png' });
+      recent.image.unshift(a);
+      toast('Enhanced', 'ok');
+    }),
+  }));
+  pad.appendChild(bank);
 }
 
 function buildBg(pad) {
   const h = takeHandoff(); if (h?.image) F.bg.image = h.image;
   const f = F.bg;
   pad.appendChild(el('div', { class: 'notice', html: `${icon('scissors', 14)} Remove the background and get a transparent PNG — perfect for stickers, products and overlays.` }));
-  pad.appendChild(imageSource(f.image, d => { f.image = d; nav.refresh(); }, () => { f.image = null; nav.refresh(); }, 'Image'));
-  pad.appendChild(resultsBlock('image'));
-  pad.appendChild(generateBar(busy.image ? 'Removing…' : 'Remove background', 'scissors', () => runJob('image', async () => {
-    if (!f.image) throw new Error('Add an image first');
-    const res = await api.bgRemove({ image: f.image });
-    if (!res.data) throw new Error('No image returned');
-    const a = addAsset({ kind: 'image', dataUrl: res.data, prompt: 'Background removed', model: 'bg-remove', modelName: 'Background remove', ext: 'png' });
-    recent.image.unshift(a);
-    toast('Background removed', 'ok');
-  }), busy.image));
+  pad.appendChild(tapeSlot(f.image, d => { f.image = d; nav.refresh(); }, () => { f.image = null; nav.refresh(); }, 'image'));
+  const bank = el('div', { class: 'bank' });
+  bank.appendChild(resultsBlock('image'));
+  bank.appendChild(recButton({
+    label: busy.image ? 'CUTTING…' : 'REMOVE BG', glyph: 'scissors', disabled: !!busy.image, pulsing: !!busy.image, sub: 'transparent png → library',
+    onClick: () => runJob('image', async () => {
+      if (!f.image) throw new Error('Add an image first');
+      const res = await api.bgRemove({ image: f.image });
+      if (!res.data) throw new Error('No image returned');
+      const a = addAsset({ kind: 'image', dataUrl: res.data, prompt: 'Background removed', model: 'bg-remove', modelName: 'Background remove', ext: 'png' });
+      recent.image.unshift(a);
+      toast('Background removed', 'ok');
+    }),
+  }));
+  pad.appendChild(bank);
 }
 
 // ════════════════════════════ VIDEO ════════════════════════════
 function viewVideo() {
-  setAccent('--c-video');
   const frag = document.createDocumentFragment();
-  frag.appendChild(toolHead('video', '--c-video', 'Video Studio', 'Generate cinematic clips from a prompt or bring a still to life.'));
-  const scroll = el('div', { class: 'scroll' });
-  const pad = el('div', { class: 'pad pad-b' });
-  scroll.appendChild(pad); frag.appendChild(scroll);
-  appendActivityDock(frag, 'video');
+  const { scroll, pad } = toolScroll();
+  frag.appendChild(scroll);
 
   const id = selectedFor('video');
   const m = findModel(id);
@@ -676,28 +698,35 @@ function viewVideo() {
   const f = F.video;
   const h = takeHandoff(); if (h?.image) { f.image = h.image; if (!o.allowsImage) { const i2v = modelsByType('video').find(x => videoOpts(x).allowsImage); if (i2v) { state.selected.video = i2v.id; return viewVideo(); } } }
 
-  pad.appendChild(modelButton('video', '--c-video'));
-  pad.appendChild(el('div', { class: 'notice', html: `${icon('film', 14)} <b>${o.modelType.replace(/-/g, ' ')}</b>${o.audio ? ' · audio supported' : ''} · prompts up to ${o.promptLimit} chars` }));
-
-  if (o.allowsImage) {
-    pad.appendChild(imageSource(f.image, d => { f.image = d; F.video.quote = null; nav.refresh(); }, () => { f.image = null; nav.refresh(); }, o.needsImage ? 'Source image (required)' : 'Source image (optional)'));
-  }
-
-  const form = el('div', { class: 'card' });
-  form.appendChild(field('Prompt', textarea(f.prompt, o.needsImage ? 'Describe the motion and camera…' : 'Describe the scene, motion and style…', v => f.prompt = v, { maxlength: o.promptLimit })));
   const durVal = o.durations.includes(f.duration) ? f.duration : o.durations[0];
-  form.appendChild(field('Duration', chips(o.durations, durVal, v => { f.duration = v; f.quote = null; nav.refresh(); })));
-  if (o.aspectRatios) { const av = o.aspectRatios.includes(f.ratio) ? f.ratio : o.aspectRatios[0]; form.appendChild(field('Aspect ratio', chips(o.aspectRatios, av, v => { f.ratio = v; f.quote = null; nav.refresh(); }))); }
-  if (o.resolutions) { const rv = o.resolutions.includes(f.resolution) ? f.resolution : o.resolutions[0]; form.appendChild(field('Resolution', chips(o.resolutions, rv, v => { f.resolution = v; f.quote = null; nav.refresh(); }))); }
-  if (o.audioConfigurable) form.appendChild(switchRow('Generate audio', f.audio, v => { f.audio = v; nav.refresh(); }));
-  form.appendChild(field('Negative prompt', textarea(f.negative, 'What to avoid (optional)…', v => f.negative = v)));
-  pad.appendChild(form);
+  const prog = typeof busy.video === 'number' ? busy.video : null;
+  const statusR = busy.video ? `RENDERING ${prog != null ? Math.round(prog * 100) + '%' : '…'}` : '● ARMED';
 
-  pad.appendChild(resultsBlock('video'));
+  const lcd = el('div', { class: 'lcd' }, [
+    el('div', { class: 'ltop' }, [
+      el('button', { class: 'lt-l tap', onclick: () => nav.openModelPicker('video'), html: `${icon('cpu', 11)}<span>VID · ${escapeHtml(modelName(id).toUpperCase())}</span>` }),
+      el('span', { class: 'armed', text: statusR }),
+    ]),
+    lcdText(null, f.prompt, o.needsImage ? '> describe the motion and camera…' : '> describe the scene, motion and style…', v => { f.prompt = v; }, { max: o.promptLimit }),
+    el('div', { class: 'sub', text: `${o.modelType.replace(/-/g, ' ')} · ${durVal}${o.audio ? ' · audio' : ''}${f.quote != null ? ' · est ' + fmtUSD(f.quote) : ''}` }),
+  ]);
+  if (busy.video) lcd.appendChild(el('div', { class: 'progress', style: { marginTop: '8px' } }, el('i', { style: { width: (prog != null ? Math.round(prog * 100) : 8) + '%' } })));
+  pad.appendChild(lcd);
 
-  // quote + generate
-  const quoteRow = el('div', { class: 'inline-actions', style: { marginBottom: '10px' } }, [
-    el('button', { class: 'btn sm', html: `${icon('info', 16)} Price quote`, onclick: async () => {
+  if (o.allowsImage) pad.appendChild(tapeSlot(f.image, d => { f.image = d; f.quote = null; nav.refresh(); }, () => { f.image = null; nav.refresh(); }, o.needsImage ? 'source image (required)' : 'source image (optional)'));
+
+  const bank = el('div', { class: 'bank' });
+  bank.appendChild(el('div', { class: 'bank-t', text: 'render bank' }));
+  const knobs = [enumKnob('DURATION', o.durations, durVal, v => { f.duration = v; f.quote = null; })];
+  if (o.resolutions) knobs.push(enumKnob('RESOLUTION', o.resolutions, o.resolutions.includes(f.resolution) ? f.resolution : o.resolutions[0], v => { f.resolution = v; f.quote = null; }));
+  bank.appendChild(el('div', { class: 'knobs' }, knobs));
+  if (o.aspectRatios) bank.appendChild(segment('ASPECT', o.aspectRatios, o.aspectRatios.includes(f.ratio) ? f.ratio : o.aspectRatios[0], v => { f.ratio = v; f.quote = null; nav.refresh(); }));
+  if (o.audioConfigurable) bank.appendChild(el('div', { class: 'switches' }, [dialSwitch('AUDIO', f.audio, v => f.audio = v)]));
+  bank.appendChild(lcdText('NEGATIVE', f.negative, 'what to avoid (optional)…', v => f.negative = v, { dim: true }));
+
+  // quote
+  bank.appendChild(el('div', { class: 'inline-actions' }, [
+    el('button', { class: 'btn sm', html: `${icon('info', 15)} Price quote`, onclick: async () => {
       try {
         const qb = { model: id, duration: durVal };
         if (o.aspectRatios) qb.aspect_ratio = o.aspectRatios.includes(f.ratio) ? f.ratio : o.aspectRatios[0];
@@ -706,55 +735,55 @@ function viewVideo() {
         const q = await api.videoQuote(qb); f.quote = q.quote; nav.refresh();
       } catch (e) { toast(e.message, 'err'); }
     } }),
-    f.quote != null ? el('div', { class: 'price-quote', style: { alignSelf: 'center' }, text: `Estimated: ${fmtUSD(f.quote)}` }) : null,
-  ].filter(Boolean));
-  pad.appendChild(quoteRow);
+    f.quote != null ? el('div', { class: 'price-quote', text: `≈ ${fmtUSD(f.quote)}` }) : null,
+  ].filter(Boolean)));
 
-  pad.appendChild(generateBar(busy.video ? 'Rendering…' : 'Generate video', 'video', () => runJob('video', async () => {
-    if (o.needsImage && !f.image) throw new Error('This model needs a source image');
-    if (!f.prompt.trim()) throw new Error('Enter a prompt');
-    const body = { model: id, prompt: f.prompt.trim(), duration: durVal };
-    if (o.aspectRatios) body.aspect_ratio = o.aspectRatios.includes(f.ratio) ? f.ratio : o.aspectRatios[0];
-    if (o.resolutions) body.resolution = o.resolutions.includes(f.resolution) ? f.resolution : o.resolutions[0];
-    if (o.audioConfigurable) body.audio = !!f.audio;
-    if (f.negative.trim()) body.negative_prompt = f.negative.trim();
-    if (o.allowsImage && f.image) body.image_url = f.image;
-    jobState.video = { stage: 'preparing' }; nav.refresh();
-    const q = await api.videoQueue(body);
-    if (!q.queue_id) throw new Error('Could not queue video');
-    jobState.video = { stage: 'queued', status: 'waiting in queue', queueId: q.queue_id }; nav.refresh();
-    const url = await pollJob('video', { model: id, queueId: q.queue_id, downloadUrl: q.download_url }, (p, status) => {
-      const statusText = status || 'rendering';
-      const finalizing = /complete|final/i.test(statusText) || (typeof p === 'number' && p > 0.92);
-      jobState.video = { stage: finalizing ? 'finalizing' : 'rendering', status: statusText, queueId: q.queue_id };
-      busy.video = (p == null || p <= 0.02) ? true : p; nav.refresh();
-    });
-    const a = addAsset({ kind: 'video', dataUrl: url, prompt: f.prompt.trim(), model: id, modelName: modelName(id), ext: 'mp4' });
-    recent.video.unshift(a);
-    toast('Video ready', 'ok');
-  }), busy.video, priceHint(m) != null && f.quote == null ? `~${fmtUSD(priceHint(m))}/sec · tap “Price quote” for exact` : null));
+  bank.appendChild(resultsBlock('video'));
+  bank.appendChild(recButton({
+    label: busy.video ? 'RENDERING…' : 'GENERATE VIDEO', glyph: 'video', disabled: !!busy.video, pulsing: !!busy.video,
+    sub: priceHint(m) != null && f.quote == null ? `~${fmtUSD(priceHint(m))}/sec · tap quote for exact` : (f.quote != null ? `est ${fmtUSD(f.quote)} → library` : 'tap to render → library'),
+    onClick: () => runJob('video', async () => {
+      if (o.needsImage && !f.image) throw new Error('This model needs a source image');
+      if (!f.prompt.trim()) throw new Error('Enter a prompt');
+      const body = { model: id, prompt: f.prompt.trim(), duration: durVal };
+      if (o.aspectRatios) body.aspect_ratio = o.aspectRatios.includes(f.ratio) ? f.ratio : o.aspectRatios[0];
+      if (o.resolutions) body.resolution = o.resolutions.includes(f.resolution) ? f.resolution : o.resolutions[0];
+      if (o.audioConfigurable) body.audio = !!f.audio;
+      if (f.negative.trim()) body.negative_prompt = f.negative.trim();
+      if (o.allowsImage && f.image) body.image_url = f.image;
+      jobState.video = { stage: 'preparing' }; nav.refresh();
+      const q = await api.videoQueue(body);
+      if (!q.queue_id) throw new Error('Could not queue video');
+      jobState.video = { stage: 'queued', status: 'waiting in queue', queueId: q.queue_id }; nav.refresh();
+      const url = await pollJob('video', { model: id, queueId: q.queue_id, downloadUrl: q.download_url }, (p, status) => {
+        const statusText = status || 'rendering';
+        const finalizing = /complete|final/i.test(statusText) || (typeof p === 'number' && p > 0.92);
+        jobState.video = { stage: finalizing ? 'finalizing' : 'rendering', status: statusText, queueId: q.queue_id };
+        busy.video = (p == null || p <= 0.02) ? true : p; nav.refresh();
+      });
+      const a = addAsset({ kind: 'video', dataUrl: url, prompt: f.prompt.trim(), model: id, modelName: modelName(id), ext: 'mp4' });
+      recent.video.unshift(a);
+      toast('Video ready', 'ok');
+    }),
+  }));
+  pad.appendChild(bank);
   return frag;
 }
 
 // ════════════════════════════ AUDIO (music / speech / transcribe) ════════════════════════════
 const AUDIO_MODES = [
-  { k: 'music', label: 'Music', icon: 'music', type: 'music' },
-  { k: 'speech', label: 'Speech', icon: 'volume', type: 'tts' },
-  { k: 'transcribe', label: 'Transcribe', icon: 'mic', type: 'asr' },
+  { k: 'music', label: 'Music', icon: 'music' },
+  { k: 'speech', label: 'Speech', icon: 'volume' },
+  { k: 'transcribe', label: 'Transcribe', icon: 'mic' },
 ];
 function viewAudio() {
-  setAccent('--c-music');
   const mode = state.mode.audio || 'music';
   const frag = document.createDocumentFragment();
-  frag.appendChild(toolHead('music', mode === 'speech' ? '--c-voice' : mode === 'transcribe' ? '--c-voice' : '--c-music', 'Audio Studio', 'Compose music, synthesise voices, and transcribe speech.'));
-  setAccent(mode === 'music' ? '--c-music' : '--c-voice');
   frag.appendChild(el('div', { class: 'segmented' }, AUDIO_MODES.map(mm =>
-    el('button', { class: 'seg' + (mode === mm.k ? ' active' : ''), html: `${icon(mm.icon, 15)} ${mm.label}`, onclick: () => { state.mode.audio = mm.k; nav.refresh(); } })
+    el('button', { class: 'seg' + (mode === mm.k ? ' active' : ''), html: `${icon(mm.icon, 14)} ${mm.label}`, onclick: () => { state.mode.audio = mm.k; nav.refresh(); } })
   )));
-  const scroll = el('div', { class: 'scroll' });
-  const pad = el('div', { class: 'pad pad-b' });
-  scroll.appendChild(pad); frag.appendChild(scroll);
-  appendActivityDock(frag, 'audio');
+  const { scroll, pad } = toolScroll();
+  frag.appendChild(scroll);
 
   if (mode === 'music') buildMusic(pad);
   else if (mode === 'speech') buildSpeech(pad);
@@ -768,165 +797,200 @@ function buildMusic(pad) {
   if (!m) { pad.appendChild(emptyState('music', 'No music models', 'Add a Venice API key to load music models.')); return; }
   const o = musicOpts(m);
   const f = F.music;
-  pad.appendChild(modelButton('music', '--c-music'));
 
-  const form = el('div', { class: 'card' });
-  form.appendChild(field('Prompt', textarea(f.prompt, 'Describe the music — genre, mood, instruments, tempo…', v => f.prompt = v, { maxlength: o.promptLimit || 2000 }), o.minPromptLength > 1 ? `At least ${o.minPromptLength} characters` : null));
+  pad.appendChild(el('div', { class: 'lcd' }, [
+    el('div', { class: 'ltop' }, [
+      el('button', { class: 'lt-l tap', onclick: () => nav.openModelPicker('music'), html: `${icon('cpu', 11)}<span>MUS · ${escapeHtml(modelName(id).toUpperCase())}</span>` }),
+      el('span', { class: 'armed', text: busy.audio ? '● WORKING' : '● ARMED' }),
+    ]),
+    lcdText(null, f.prompt, '> genre, mood, instruments, tempo…', v => { f.prompt = v; }, { max: o.promptLimit || 2000 }),
+    o.minPromptLength > 1 ? el('div', { class: 'sub', text: `min ${o.minPromptLength} chars` }) : null,
+  ]));
 
-  if (o.supportsForceInstrumental) form.appendChild(switchRow('Instrumental only', f.instrumental, v => { f.instrumental = v; nav.refresh(); }, 'No vocals'));
-  if (o.supportsLyrics && !f.instrumental) {
-    if (o.supportsLyricsOptimizer) form.appendChild(switchRow('Auto-write lyrics', f.optimizer, v => { f.optimizer = v; nav.refresh(); }, 'Generate lyrics from your prompt'));
-    if (!f.optimizer) form.appendChild(field(o.lyricsRequired ? 'Lyrics (required)' : 'Lyrics (optional)', textarea(f.lyrics, 'Verse 1: …', v => f.lyrics = v, { maxlength: o.lyricsLimit || 5000 })));
-  }
-  if (o.voices) form.appendChild(field('Voice', select(o.voices, o.voices.includes(f.voice) ? f.voice : (o.defaultVoice || o.voices[0]), v => f.voice = v)));
-  if (o.supportsLanguageCode) form.appendChild(field('Language code', (() => { const i = el('input', { type: 'text', placeholder: 'e.g. en, es, ja', value: f.lang }); i.addEventListener('input', e => f.lang = e.target.value); return i; })()));
+  const bank = el('div', { class: 'bank' });
+  bank.appendChild(el('div', { class: 'bank-t', text: 'studio bank' }));
 
+  const switches = [];
+  if (o.supportsForceInstrumental) switches.push(dialSwitch('INSTRUMENTAL', f.instrumental, v => { f.instrumental = v; nav.refresh(); }));
+  if (o.supportsLyrics && !f.instrumental && o.supportsLyricsOptimizer) switches.push(dialSwitch('AUTO-LYRICS', f.optimizer, v => { f.optimizer = v; nav.refresh(); }));
+  if (switches.length) bank.appendChild(el('div', { class: 'switches' }, switches));
+
+  if (o.supportsLyrics && !f.instrumental && !f.optimizer) bank.appendChild(lcdText(o.lyricsRequired ? 'LYRICS (REQUIRED)' : 'LYRICS (OPTIONAL)', f.lyrics, 'Verse 1: …', v => f.lyrics = v, { dim: true, max: o.lyricsLimit || 5000 }));
+  if (o.voices) bank.appendChild(cartBtn('VOICE', o.voices.includes(f.voice) ? f.voice : (o.defaultVoice || o.voices[0]), () => openChoiceSheet('Voice cartridges', o.voices, o.voices.includes(f.voice) ? f.voice : (o.defaultVoice || o.voices[0]), v => f.voice = v), 'volume'));
+  if (o.supportsLanguageCode) bank.appendChild(lcdText('LANGUAGE CODE', f.lang, 'e.g. en, es, ja', v => f.lang = v, { dim: true }));
+
+  const knobs = [];
   const durMeta = o.durationOptions || (o.minDuration && o.maxDuration);
-  if (durMeta) {
-    if (o.durationOptions) { const dv = o.durationOptions.includes(f.duration) ? f.duration : (o.defaultDuration || o.durationOptions[0]); form.appendChild(field('Duration', chips(o.durationOptions, dv, v => { f.duration = v; f.quote = null; nav.refresh(); }, x => x + 's'))); }
-    else { const dv = f.duration ?? o.defaultDuration ?? o.minDuration; form.appendChild(field('Duration (sec)', slider(o.minDuration, o.maxDuration, 1, dv, v => { f.duration = v; updateVal(form, 'dur', v + 's'); }), null, dv + 's')); markVal(form, 'dur'); }
-  }
-  if (o.supportsSpeed) { const sv = f.speed ?? o.defaultSpeed; form.appendChild(field('Speed', slider(o.minSpeed, o.maxSpeed, 0.05, sv, v => { f.speed = v; updateVal(form, 'spd', v.toFixed(2) + '×'); }), null, sv.toFixed(2) + '×')); markVal(form, 'spd'); }
-  pad.appendChild(form);
+  if (o.durationOptions) knobs.push(enumKnob('DURATION', o.durationOptions, o.durationOptions.includes(f.duration) ? f.duration : (o.defaultDuration || o.durationOptions[0]), v => f.duration = v, x => x + 's'));
+  else if (o.minDuration && o.maxDuration) knobs.push(knob({ label: 'DURATION', value: f.duration ?? o.defaultDuration ?? o.minDuration, min: o.minDuration, max: o.maxDuration, step: 1, fmt: v => v + 's', onInput: v => f.duration = v }));
+  if (o.supportsSpeed) knobs.push(knob({ label: 'SPEED', value: f.speed ?? o.defaultSpeed, min: o.minSpeed, max: o.maxSpeed, step: 0.05, fmt: v => v.toFixed(2) + '×', onInput: v => f.speed = v }));
+  if (knobs.length) bank.appendChild(el('div', { class: 'knobs' }, knobs));
 
-  pad.appendChild(resultsBlock('audio'));
-  pad.appendChild(generateBar(busy.audio ? 'Composing…' : 'Generate music', 'music', () => runJob('audio', async () => {
-    if (!f.prompt.trim()) throw new Error('Enter a prompt');
-    const body = { model: id, prompt: f.prompt.trim() };
-    if (o.supportsForceInstrumental && f.instrumental) body.force_instrumental = true;
-    if (o.supportsLyrics && !f.instrumental) {
-      if (o.supportsLyricsOptimizer && f.optimizer) body.lyrics_optimizer = true;
-      else if (f.lyrics.trim()) body.lyrics_prompt = f.lyrics.trim();
-    }
-    if (o.lyricsRequired && !body.lyrics_prompt && !body.lyrics_optimizer && !f.instrumental) throw new Error('This model requires lyrics');
-    if (o.voices) body.voice = o.voices.includes(f.voice) ? f.voice : (o.defaultVoice || o.voices[0]);
-    if (o.supportsLanguageCode && f.lang.trim()) body.language_code = f.lang.trim();
-    if (durMeta) { const d = o.durationOptions ? (o.durationOptions.includes(f.duration) ? f.duration : (o.defaultDuration || o.durationOptions[0])) : Math.round(f.duration ?? o.defaultDuration ?? o.minDuration); if (d) body.duration_seconds = d; }
-    if (o.supportsSpeed && f.speed != null) body.speed = f.speed;
-    const q = await api.audioQueue(body);
-    if (!q.queue_id) throw new Error('Could not queue audio');
-    const url = await pollJob('audio', { model: id, queueId: q.queue_id }, (p) => { busy.audio = (p == null || p <= 0.02) ? true : p; nav.refresh(); });
-    const a = addAsset({ kind: 'audio', dataUrl: url, prompt: f.prompt.trim(), model: id, modelName: modelName(id), ext: 'mp3' });
-    recent.audio.unshift(a);
-    toast('Music ready', 'ok');
-  }), busy.audio));
+  bank.appendChild(resultsBlock('audio'));
+  bank.appendChild(recButton({
+    label: busy.audio ? 'COMPOSING…' : 'GENERATE MUSIC', glyph: 'music', disabled: !!busy.audio, pulsing: !!busy.audio, sub: 'tap to compose → library',
+    onClick: () => runJob('audio', async () => {
+      if (!f.prompt.trim()) throw new Error('Enter a prompt');
+      const body = { model: id, prompt: f.prompt.trim() };
+      if (o.supportsForceInstrumental && f.instrumental) body.force_instrumental = true;
+      if (o.supportsLyrics && !f.instrumental) {
+        if (o.supportsLyricsOptimizer && f.optimizer) body.lyrics_optimizer = true;
+        else if (f.lyrics.trim()) body.lyrics_prompt = f.lyrics.trim();
+      }
+      if (o.lyricsRequired && !body.lyrics_prompt && !body.lyrics_optimizer && !f.instrumental) throw new Error('This model requires lyrics');
+      if (o.voices) body.voice = o.voices.includes(f.voice) ? f.voice : (o.defaultVoice || o.voices[0]);
+      if (o.supportsLanguageCode && f.lang.trim()) body.language_code = f.lang.trim();
+      if (durMeta) { const d = o.durationOptions ? (o.durationOptions.includes(f.duration) ? f.duration : (o.defaultDuration || o.durationOptions[0])) : Math.round(f.duration ?? o.defaultDuration ?? o.minDuration); if (d) body.duration_seconds = d; }
+      if (o.supportsSpeed && f.speed != null) body.speed = f.speed;
+      const q = await api.audioQueue(body);
+      if (!q.queue_id) throw new Error('Could not queue audio');
+      const url = await pollJob('audio', { model: id, queueId: q.queue_id }, (p) => { busy.audio = (p == null || p <= 0.02) ? true : p; nav.refresh(); });
+      const a = addAsset({ kind: 'audio', dataUrl: url, prompt: f.prompt.trim(), model: id, modelName: modelName(id), ext: 'mp3' });
+      recent.audio.unshift(a);
+      toast('Music ready', 'ok');
+    }),
+  }));
+  pad.appendChild(bank);
 }
 
 function buildSpeech(pad) {
-  setAccent('--c-voice');
   const id = selectedFor('tts');
   const m = findModel(id);
   if (!m) { pad.appendChild(emptyState('volume', 'No speech models', 'Add a Venice API key to load TTS models.')); return; }
   const o = ttsOpts(m);
   const f = F.speech;
-  pad.appendChild(modelButton('tts', '--c-voice'));
 
-  const form = el('div', { class: 'card' });
-  form.appendChild(field('Text', textarea(f.text, 'Type what you want spoken…', v => f.text = v, { maxlength: 4096 }), 'Up to 4096 characters'));
-  form.appendChild(field('Voice', select(o.voices, o.voices.includes(f.voice) ? f.voice : o.voices[0], v => f.voice = v)));
-  form.appendChild(field('Format', chips(['mp3', 'opus', 'aac', 'flac', 'wav'], f.format, v => { f.format = v; nav.refresh(); })));
-  form.appendChild(field('Speed', slider(0.25, 4, 0.05, f.speed, v => { f.speed = v; updateVal(form, 'sp', v.toFixed(2) + '×'); }), null, f.speed.toFixed(2) + '×')); markVal(form, 'sp');
-  form.appendChild(field('Language (optional)', (() => { const i = el('input', { type: 'text', placeholder: 'e.g. en, English, ja', value: f.lang }); i.addEventListener('input', e => f.lang = e.target.value); return i; })()));
-  pad.appendChild(form);
-  const speechAdvanced = [];
-  if (o.supportsPrompt) speechAdvanced.push(field('Style direction', (() => { const i = el('input', { type: 'text', placeholder: 'e.g. Very happy. Excited.', value: f.style }); i.addEventListener('input', e => f.style = e.target.value); return i; })()));
-  if (o.supportsTemperature) speechAdvanced.push(field('Temperature', slider(0, 2, 0.05, f.temperature, v => { f.temperature = v; updateVal(speechAdv, 'tm', v.toFixed(2)); }), null, f.temperature.toFixed(2)));
-  if (o.supportsTopP) speechAdvanced.push(field('Top P', slider(0, 1, 0.05, f.topP, v => { f.topP = v; updateVal(speechAdv, 'tp', v.toFixed(2)); }), null, f.topP.toFixed(2)));
-  const speechAdv = advancedPanel('Voice tuning', speechAdvanced, f.advanced, open => f.advanced = open);
-  if (o.supportsTemperature) markVal(speechAdv, 'tm');
-  if (o.supportsTopP) markVal(speechAdv, 'tp');
-  if (speechAdvanced.length) pad.appendChild(speechAdv);
+  pad.appendChild(el('div', { class: 'lcd' }, [
+    el('div', { class: 'ltop' }, [
+      el('button', { class: 'lt-l tap', onclick: () => nav.openModelPicker('tts'), html: `${icon('cpu', 11)}<span>VOX · ${escapeHtml(modelName(id).toUpperCase())}</span>` }),
+      el('span', { class: 'armed', text: busy.audio ? '● WORKING' : '● ARMED' }),
+    ]),
+    lcdText(null, f.text, '> type what you want spoken…', v => { f.text = v; }, { max: 4096 }),
+    el('div', { class: 'sub', text: 'up to 4096 characters' }),
+  ]));
 
-  pad.appendChild(resultsBlock('audio'));
-  pad.appendChild(generateBar(busy.audio ? 'Synthesising…' : 'Generate speech', 'volume', () => runJob('audio', async () => {
-    if (!f.text.trim()) throw new Error('Enter some text');
-    const body = { model: id, input: f.text.slice(0, 4096), voice: o.voices.includes(f.voice) ? f.voice : o.voices[0], response_format: f.format || 'mp3' };
-    if (f.speed !== 1) body.speed = f.speed;
-    if (f.lang.trim()) body.language = f.lang.trim();
-    if (o.supportsPrompt && f.style.trim()) body.prompt = f.style.trim();
-    if (o.supportsTemperature) body.temperature = f.temperature;
-    if (o.supportsTopP) body.top_p = f.topP;
-    const res = await api.speech(body);
-    if (!res.data) throw new Error('No audio returned');
-    const a = addAsset({ kind: 'audio', dataUrl: res.data, prompt: f.text.slice(0, 120), model: id, modelName: modelName(id), ext: f.format || 'mp3' });
-    recent.audio.unshift(a);
-    toast('Speech ready', 'ok');
-  }), busy.audio));
+  const bank = el('div', { class: 'bank' });
+  bank.appendChild(el('div', { class: 'bank-t', text: 'voice bank' }));
+  bank.appendChild(cartBtn('VOICE', o.voices.includes(f.voice) ? f.voice : o.voices[0], () => openChoiceSheet('Voice cartridges', o.voices, o.voices.includes(f.voice) ? f.voice : o.voices[0], v => f.voice = v), 'volume'));
+
+  const knobs = [knob({ label: 'SPEED', value: f.speed, min: 0.25, max: 4, step: 0.05, fmt: v => v.toFixed(2) + '×', onInput: v => f.speed = v })];
+  if (o.supportsTemperature) knobs.push(knob({ label: 'TEMP', value: f.temperature, min: 0, max: 2, step: 0.05, fmt: v => v.toFixed(2), onInput: v => f.temperature = v }));
+  if (o.supportsTopP) knobs.push(knob({ label: 'TOP P', value: f.topP, min: 0, max: 1, step: 0.05, fmt: v => v.toFixed(2), onInput: v => f.topP = v }));
+  bank.appendChild(el('div', { class: 'knobs' }, knobs));
+
+  bank.appendChild(segment('FORMAT', ['mp3', 'opus', 'aac', 'flac', 'wav'], f.format, v => { f.format = v; nav.refresh(); }));
+  if (o.supportsPrompt) bank.appendChild(lcdText('STYLE DIRECTION', f.style, 'e.g. Very happy. Excited.', v => f.style = v, { dim: true }));
+  bank.appendChild(lcdText('LANGUAGE (OPTIONAL)', f.lang, 'e.g. en, English, ja', v => f.lang = v, { dim: true }));
+
+  bank.appendChild(resultsBlock('audio'));
+  bank.appendChild(recButton({
+    label: busy.audio ? 'SYNTHESISING…' : 'GENERATE SPEECH', glyph: 'volume', disabled: !!busy.audio, pulsing: !!busy.audio, sub: 'tap to synthesise → library',
+    onClick: () => runJob('audio', async () => {
+      if (!f.text.trim()) throw new Error('Enter some text');
+      const body = { model: id, input: f.text.slice(0, 4096), voice: o.voices.includes(f.voice) ? f.voice : o.voices[0], response_format: f.format || 'mp3' };
+      if (f.speed !== 1) body.speed = f.speed;
+      if (f.lang.trim()) body.language = f.lang.trim();
+      if (o.supportsPrompt && f.style.trim()) body.prompt = f.style.trim();
+      if (o.supportsTemperature) body.temperature = f.temperature;
+      if (o.supportsTopP) body.top_p = f.topP;
+      const res = await api.speech(body);
+      if (!res.data) throw new Error('No audio returned');
+      const a = addAsset({ kind: 'audio', dataUrl: res.data, prompt: f.text.slice(0, 120), model: id, modelName: modelName(id), ext: f.format || 'mp3' });
+      recent.audio.unshift(a);
+      toast('Speech ready', 'ok');
+    }),
+  }));
+  pad.appendChild(bank);
 }
 
 function buildTranscribe(pad) {
-  setAccent('--c-voice');
   const id = selectedFor('asr');
-  const m = findModel(id);
   const f = F.transcribe;
-  if (modelsByType('asr').length) pad.appendChild(modelButton('asr', '--c-voice'));
-  pad.appendChild(el('div', { class: 'notice', html: `${icon('mic', 14)} Upload audio or a video file and get an accurate transcript.` }));
+  const hasModel = modelsByType('asr').length;
 
-  const srcCard = el('div', { class: 'card' });
-  srcCard.appendChild(el('div', { class: 'panel-title', text: 'Audio file' }));
-  if (f.audio) srcCard.appendChild(el('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } }, [el('span', { style: { color: 'var(--accent)' }, html: icon('volume', 20) }), el('div', { style: { flex: '1', fontSize: '13px' }, text: f.filename || 'audio file' }), el('button', { class: 'act', html: icon('x', 14), onclick: () => { f.audio = null; f.filename = ''; nav.refresh(); } })]));
-  else srcCard.appendChild(el('button', { class: 'source', style: { width: '100%' }, onclick: () => {
-    const inp = document.getElementById('fileAudio'); inp.value = '';
-    inp.onchange = async () => { const file = inp.files?.[0]; if (!file) return; f.filename = file.name; f.audio = await fileToDataURL(file); nav.refresh(); };
-    inp.click();
-  } }, [el('span', { style: { color: 'var(--accent)' }, html: icon('upload', 26) }), el('div', { text: 'Tap to choose an audio or video file' })]));
-  pad.appendChild(srcCard);
-
-  if (f.text) pad.appendChild(el('div', { class: 'card' }, [
-    el('div', { class: 'panel-title', html: `${icon('type', 13)} Transcript` }),
-    el('div', { style: { fontSize: '14px', lineHeight: '1.6', whiteSpace: 'pre-wrap', color: 'var(--text)' }, text: f.text }),
-    el('div', { class: 'result-actions' }, [
-      el('button', { class: 'act', html: `${icon('copy', 14)} Copy`, onclick: () => copyText(f.text) }),
-      el('button', { class: 'act', html: `${icon('download', 14)} Download`, onclick: () => downloadText(f.text, 'vgpt-transcript.txt') }),
-      el('button', { class: 'act', html: `${icon('chat', 14)} Send to chat`, onclick: () => { newChat(); chat.messages.push({ role: 'user', content: f.text, display: f.text }); nav.goTo('chat'); runChat(); } }),
+  pad.appendChild(el('div', { class: 'lcd tall' }, [
+    el('div', { class: 'ltop' }, [
+      hasModel ? el('button', { class: 'lt-l tap', onclick: () => nav.openModelPicker('asr'), html: `${icon('cpu', 11)}<span>ASR · ${escapeHtml((modelName(id) || 'auto').toUpperCase())}</span>` }) : el('span', { class: 'lt-l', text: 'ASR · TRANSCRIBE' }),
+      el('span', { class: 'armed', text: busy.audio ? '● WORKING' : f.text ? '● DONE' : '● ARMED' }),
     ]),
+    el('div', { class: 'lcd-scroll' }, f.text
+      ? el('div', { class: 'ca', text: f.text })
+      : el('div', { class: 'ca', html: '◆ load an audio or video tape below, then press TRANSCRIBE.' })),
   ]));
 
-  pad.appendChild(generateBar(busy.audio ? 'Transcribing…' : 'Transcribe', 'mic', () => runJob('audio', async () => {
-    if (!f.audio) throw new Error('Choose an audio file');
-    const body = { audio: f.audio, filename: f.filename || 'audio.mp3', response_format: 'json' };
-    if (id) body.model = id;
-    if (f.language?.trim()) body.language = f.language.trim();
-    const res = await api.transcribe(body);
-    f.text = res.text || res || ''; if (typeof f.text !== 'string') f.text = JSON.stringify(f.text);
-    toast('Transcribed', 'ok');
-  }), busy.audio));
+  // tape slot for audio file
+  const slot = f.audio
+    ? el('div', { class: 'tape-thumb', style: { padding: '14px', display: 'flex', alignItems: 'center', gap: '10px' } }, [el('span', { style: { color: 'var(--accent)' }, html: icon('volume', 22) }), el('div', { style: { flex: '1', fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--amb)' }, text: f.filename || 'audio file' }), el('button', { class: 'act', html: icon('x', 14), onclick: () => { f.audio = null; f.filename = ''; nav.refresh(); } })])
+    : el('button', { class: 'tape-slot', onclick: () => { const inp = document.getElementById('fileAudio'); inp.value = ''; inp.onchange = async () => { const file = inp.files?.[0]; if (!file) return; f.filename = file.name; f.audio = await fileToDataURL(file); nav.refresh(); }; inp.click(); } }, [el('span', { class: 'ts-ic', html: icon('upload', 28) }), el('span', { text: 'AUDIO / VIDEO TAPE' }), el('span', { class: 'ts-sub', text: 'tap to choose a file' })]);
+  pad.appendChild(slot);
+
+  if (f.text) pad.appendChild(el('div', { class: 'result-actions' }, [
+    el('button', { class: 'act', html: `${icon('copy', 14)} Copy`, onclick: () => copyText(f.text) }),
+    el('button', { class: 'act', html: `${icon('download', 14)} Download`, onclick: () => downloadText(f.text, 'vgpt-transcript.txt') }),
+    el('button', { class: 'act accent', html: `${icon('chat', 14)} Send to chat`, onclick: () => { newChat(); chat.messages.push({ role: 'user', content: f.text, display: f.text }); nav.goTo('chat'); runChat(); } }),
+  ]));
+
+  const bank = el('div', { class: 'bank' });
+  bank.appendChild(resultsBlock('audio'));
+  bank.appendChild(recButton({
+    label: busy.audio ? 'TRANSCRIBING…' : 'TRANSCRIBE', glyph: 'mic', disabled: !!busy.audio, pulsing: !!busy.audio, sub: 'tap to transcribe',
+    onClick: () => runJob('audio', async () => {
+      if (!f.audio) throw new Error('Choose an audio file');
+      const body = { audio: f.audio, filename: f.filename || 'audio.mp3', response_format: 'json' };
+      if (id) body.model = id;
+      if (f.language?.trim()) body.language = f.language.trim();
+      const res = await api.transcribe(body);
+      f.text = res.text || res || ''; if (typeof f.text !== 'string') f.text = JSON.stringify(f.text);
+      toast('Transcribed', 'ok');
+    }),
+  }));
+  pad.appendChild(bank);
 }
 
 // ════════════════════════════ LIBRARY ════════════════════════════
+const KIND_TAG = { image: 'IMG', video: 'VID', audio: 'AUD' };
 function viewLibrary() {
-  setAccent('--c-library');
   const frag = document.createDocumentFragment();
-  frag.appendChild(toolHead('library', '--c-library', 'Library', 'Every creation lives here. Tap any image to remix it.'));
-  const scroll = el('div', { class: 'scroll' });
-  const pad = el('div', { class: 'pad pad-b' });
-  scroll.appendChild(pad); frag.appendChild(scroll);
-
   const assets = listAssets();
-  if (!assets.length) { pad.appendChild(emptyState('layers', 'Nothing here yet', 'Generate an image, video or track and it will appear here — ready to download or chain into another tool.')); return frag; }
 
-  const grid = el('div', { class: 'gallery' });
-  assets.forEach(a => {
-    const item = el('button', { class: 'g-item', onclick: () => openAsset(a) });
-    if (a.kind === 'image') item.appendChild(el('img', { src: a.dataUrl, loading: 'lazy' }));
-    else if (a.kind === 'video') { item.appendChild(el('video', { src: a.dataUrl, muted: 'true', style: { width: '100%', height: '100%', objectFit: 'cover' } })); item.appendChild(el('div', { class: 'g-av', html: icon('play', 38) })); }
-    else item.appendChild(el('div', { class: 'g-av', html: icon('music', 38) }));
-    item.appendChild(el('span', { class: 'g-badge', text: a.kind }));
-    grid.appendChild(item);
+  const lcd = el('div', { class: 'lcd tall' });
+  lcd.appendChild(el('div', { class: 'ltop' }, [el('span', { text: 'LIBRARY · ~/vgpt' }), el('span', { text: `${assets.length} ITEM${assets.length === 1 ? '' : 'S'}` })]));
+
+  if (!assets.length) {
+    lcd.appendChild(el('div', { class: 'lcd-scroll' }, el('div', { class: 'ca', html: '◆ nothing here yet. generate an image, video or track — it lands here, ready to download or chain into another tool.' })));
+    frag.appendChild(lcd);
+    return frag;
+  }
+
+  libSel = Math.max(0, Math.min(libSel, assets.length - 1));
+  const list = el('div', { class: 'lcd-scroll' });
+  assets.forEach((a, i) => {
+    const meta = [a.modelName || a.model, a.bytes ? (a.bytes / 1024 | 0) + ' KB' : ''].filter(Boolean).join(' · ');
+    const name = (a.prompt || a.modelName || a.kind || 'untitled').slice(0, 28);
+    list.appendChild(el('button', { class: 'lrow' + (i === libSel ? ' sel' : ''), onclick: () => { if (i === libSel) openAsset(a); else { libSel = i; nav.refresh(); } } }, [
+      el('span', { class: 'lt', text: KIND_TAG[a.kind] || 'TXT' }),
+      el('span', { class: 'ln', text: name }),
+      el('span', { class: 'lm', text: meta }),
+    ]));
   });
-  pad.appendChild(grid);
+  lcd.appendChild(list);
+  frag.appendChild(lcd);
+
+  // jog dial: prev / open / next
+  frag.appendChild(el('div', { class: 'jog' }, [
+    el('button', { class: 'jogd', disabled: libSel <= 0, html: icon('caretLeft', 22), onclick: () => { libSel = Math.max(0, libSel - 1); nav.refresh(); } }),
+    el('button', { class: 'jogd big', html: icon('enter', 26), onclick: () => openAsset(assets[libSel]) }),
+    el('button', { class: 'jogd', disabled: libSel >= assets.length - 1, html: icon('caretRight', 22), onclick: () => { libSel = Math.min(assets.length - 1, libSel + 1); nav.refresh(); } }),
+  ]));
   return frag;
 }
 function openAsset(a) {
-  const body = el('div', {}, [resultCard(a), el('button', { class: 'btn full ghost', style: { marginTop: '6px', color: '#ff6b6b' }, html: `${icon('trash', 18)} Delete`, onclick: () => { removeAsset(a.id); recent.image = recent.image.filter(x => x.id !== a.id); recent.video = recent.video.filter(x => x.id !== a.id); recent.audio = recent.audio.filter(x => x.id !== a.id); nav.closeSheet(); nav.refresh(); } })]);
+  if (!a) return;
+  const body = el('div', {}, [resultCard(a), el('button', { class: 'btn full ghost', style: { marginTop: '6px', color: 'var(--danger)' }, html: `${icon('trash', 18)} Delete`, onclick: () => { removeAsset(a.id); recent.image = recent.image.filter(x => x.id !== a.id); recent.video = recent.video.filter(x => x.id !== a.id); recent.audio = recent.audio.filter(x => x.id !== a.id); nav.closeSheet(); nav.refresh(); } })]);
   nav.openSheet('Asset', body);
 }
 
-// helpers to update a slider's value label without full re-render
-function markVal(form, key) { const f = Array.from(form.querySelectorAll('.val')).find(n => !n.dataset.k); if (f) f.dataset.k = key; }
-function updateVal(form, key, text) { const node = Array.from(form.querySelectorAll('.val')).find(n => n.dataset.k === key); if (node) node.textContent = text; }
-
-// header pill context for the current tool/mode
+// header pill context for the current tool/mode (kept for compatibility)
 export function currentModelContext() {
   if (state.tool === 'chat') return { type: 'text', show: true };
   if (state.tool === 'image') { const mo = state.mode.image; return mo === 'generate' ? { type: 'image', show: true } : mo === 'edit' ? { type: 'inpaint', show: true } : { type: null, show: false }; }
