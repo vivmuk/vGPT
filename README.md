@@ -1,195 +1,96 @@
-# vGPT - Advanced AI Chat Application
+# vGPT — Venice AI Super App
 
-[![React Native](https://img.shields.io/badge/React%20Native-0.74.5-blue.svg)](https://reactnative.dev/)
-[![Expo](https://img.shields.io/badge/Expo-Latest-black.svg)](https://expo.dev/)
-[![Venice AI](https://img.shields.io/badge/Venice%20AI-Integrated-orange.svg)](https://venice.ai/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.3.3-blue.svg)](https://www.typescriptlang.org/)
+[![Venice AI](https://img.shields.io/badge/Powered%20by-Venice%20AI-FF7F50.svg)](https://venice.ai/)
+[![PWA](https://img.shields.io/badge/PWA-installable-8A6BFF.svg)](#)
 
-A beautiful, feature-rich mobile chat application built with React Native and Expo, powered by Venice AI's advanced language models. Features a stunning UI, comprehensive model selection, and advanced AI configuration options.
+A **futuristic, mobile-first multimodal super app** that puts the entire Venice AI
+platform in one place. Chat, generate and edit images, upscale, remove
+backgrounds, make videos, compose music, synthesise voices, and transcribe audio —
+then **chain any result into the next tool**. Generate an image → animate it into a
+video → or edit, enhance, and remix it, all in a couple of taps.
 
-![vGPT Screenshot](https://via.placeholder.com/800x400/FF6B47/FFFFFF?text=vGPT+Chat+Interface)
+The web app is a self-contained, instant-loading PWA served by a thin Node/Express
+proxy. No heavy framework, no build step — it loads fast and feels native on a phone.
 
-## ✨ Features
+## ✨ What it can do
 
-### 🤖 AI-Powered Chat
-- **Multiple AI Models**: Access to Venice AI's complete model lineup including:
-  - Venice Small (Qwen 3.4B) - Fast and efficient
-  - Venice Medium (Mistral 3.1 24B) - Balanced performance
-  - Venice Large (Qwen 3 235B) - Maximum capability
-  - Venice Reasoning (Qwen 2.5 QwQ 32B) - Advanced reasoning
-  - DeepSeek R1 671B - State-of-the-art reasoning
-  - Specialized models for coding, vision, and more
+Every tool reads each model's advertised **capabilities and constraints** from the
+Venice `/models` endpoint and builds its form (and request payload) dynamically — so
+new models with new parameters work automatically, and unsupported parameters are
+never sent.
 
-### 🎨 Beautiful UI Design
-- **Modern Interface**: Clean, professional design with subtle animations
-- **Enhanced Typography**: Carefully crafted font hierarchy and spacing
-- **Smooth Animations**: Delightful user interactions and transitions
-- **Responsive Layout**: Optimized for various screen sizes
+| Tool | Venice endpoints | Highlights |
+|------|------------------|------------|
+| **Chat** | `/chat/completions` | Streaming, reasoning, web search, vision (attach images) |
+| **Image · Generate** | `/image/generate` | Aspect ratio / resolution / steps / CFG / styles / variants — per model |
+| **Image · Edit** | `/image/edit`, `/image/multi-edit` | Prompt-based editing, multi-image compositing |
+| **Image · Enhance** | `/image/upscale` | Upscale up to 4× and AI detail enhancement |
+| **Image · Remove BG** | `/image/background-remove` | Transparent-PNG cutouts |
+| **Video** | `/video/queue` → `/video/retrieve` | Text-to-video & image-to-video, duration/resolution/audio, live price quote |
+| **Audio · Music** | `/audio/queue` → `/audio/retrieve` | Lyrics, instrumental, voice, duration, speed — per model |
+| **Audio · Speech** | `/audio/speech` | 100+ voices, formats, speed, style prompts |
+| **Audio · Transcribe** | `/audio/transcriptions` | Speech-to-text from any audio/video file |
+| **Library** | — | Every creation, persisted locally, with one-tap chaining |
 
-### ⚙️ Advanced Configuration
-- **Model Selection**: Easy switching between AI models with detailed information
-- **Temperature Control**: Fine-tune creativity and randomness (0.0 - 2.0)
-- **Nucleus Sampling (Top P)**: Control response diversity (0.0 - 1.0)
-- **Min P Filtering**: Set minimum probability thresholds
-- **Token Limits**: Configurable response length (1 - 4096 tokens)
-- **Web Search**: Enable AI to search the web for current information
-- **Repetition Penalty**: Reduce repetitive responses
+## 🔑 Access & the 5-query free trial
 
-### 🌐 Web Search Integration
-- **Smart Web Search**: AI can search the web when needed
-- **Auto Mode**: Let the AI decide when to search
-- **Manual Control**: Force web search on or off
-- **Current Information**: Get up-to-date information and facts
+- **Shared key (optional):** set `VENICE_API_KEY` on the server and *anyone* who
+  opens the site gets **5 free queries** to try every feature.
+- **Bring your own key:** after the free trial — or any time — a user pastes their
+  own Venice API key for **unlimited** use on their own credits. The key is stored
+  only in their browser (`localStorage`) and sent straight to Venice via the proxy;
+  it is never persisted server-side.
+- Don't have a key? The app links to **https://venice.ai/chat?ref=yN8qqI** to get one,
+  and a key shared by anyone can simply be pasted in.
 
-### 📱 User Experience
-- **Intuitive Navigation**: Easy access to all features
-- **Visual Feedback**: Clear loading states and animations
-- **Setting Explanations**: Helpful tooltips for all configuration options
-- **Model Information**: Detailed specs including context length, capabilities, and pricing
+## 🚀 Run / deploy
 
-## 🚀 Getting Started
-
-### Prerequisites
-- Node.js (v18 or higher)
-- npm or yarn
-- Expo CLI
-- React Native development environment
-
-### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/vivmuk/vGPT.git
-   cd vGPT
-   ```
-
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Install Expo CLI** (if not already installed)
-   ```bash
-   npm install -g expo-cli
-   # or
-   npm install -g @expo/cli
-   ```
-
-4. **Set up Convex backend**
-   ```bash
-   npx convex dev
-   ```
-
-5. **Start the development server**
-   ```bash
-   npm start
-   # or
-   expo start
-   ```
-
-6. **Run on device/simulator**
-   - For iOS: Press `i` or scan QR code with Camera app
-   - For Android: Press `a` or scan QR code with Expo Go app
-
-## 🔧 Configuration
-
-### Environment Setup
-The app uses Convex for backend services. Make sure to:
-1. Set up your Convex project at [convex.dev](https://convex.dev)
-2. Configure your Venice AI API key in the Convex functions
-3. Deploy your Convex functions
-
-### Venice AI Integration
-The app integrates with Venice AI's chat completions API. Features include:
-- Real-time streaming responses
-- Multiple model support
-- Advanced parameter configuration
-- Web search capabilities
-
-## 📱 App Structure
-
-```
-vGPT/
-├── app/                    # App screens and navigation
-│   ├── index.tsx          # Main chat interface
-│   ├── settings.tsx       # Settings and configuration
-│   └── _layout.tsx        # App layout and navigation
-├── convex/                # Backend functions
-│   ├── venice.ts          # Venice AI integration
-│   ├── settings.ts        # Settings management
-│   └── schema.ts          # Database schema
-├── assets/                # Images and fonts
-└── package.json           # Dependencies and scripts
+```bash
+npm install
+VENICE_API_KEY=your_key_here npm start   # serves the PWA + proxy on :3000
 ```
 
-## 🎯 Key Features Explained
+On **Railway** (configured in `railway.toml`): build runs `npm install`, start runs
+`npm start`. Set `VENICE_API_KEY` in the service variables for the shared free trial
+(or leave it unset to require every visitor to bring their own key).
 
-### Model Selection
-- **Quick Switching**: Change models directly from the chat screen
-- **Detailed Information**: View model capabilities, context limits, and pricing
-- **Smart Recommendations**: See which models are best for different tasks
+### Why Node and not Rust?
 
-### Advanced Settings
-- **Temperature**: Controls randomness (lower = more focused, higher = more creative)
-- **Top P**: Nucleus sampling for response diversity
-- **Min P**: Filters out unlikely tokens for better quality
-- **Repetition Penalty**: Reduces repetitive text generation
+The server is a thin I/O-bound proxy — its job is to forward requests to Venice and
+stream responses back. Latency is dominated by model inference and network round-trips,
+not by our process's CPU, so a Rust rewrite would add a lot of complexity (and break
+the zero-config Railway/Node pipeline) for no perceptible speed gain. The real
+performance wins are already here: a framework-free static PWA that loads instantly,
+60-second model caching, and streamed chat.
 
-### Web Search
-- **Automatic**: AI decides when to search based on the query
-- **Manual Control**: Force web search on/off for specific needs
-- **Current Data**: Get real-time information and recent developments
+## 🏗️ Architecture
 
-## 🛠️ Built With
+```
+server.js                # Express proxy for the full Venice API + static host
+  /api/config            # whether a shared key is configured
+  /api/models            # model catalogue (cached 60s)
+  /api/chat              # streaming chat completions
+  /api/image/*           # generate · edit · multi-edit · upscale · background-remove · styles
+  /api/video/*           # quote · queue · retrieve · complete
+  /api/audio/*           # quote · queue · retrieve · complete · speech · transcriptions
+  /api/fetch-media       # fetch presigned media (VPS-backed video models)
+public/
+  index.html             # app shell + PWA manifest
+  styles.css             # futuristic glass/neon theme
+  core.js                # state, API client, capability helpers, asset store
+  tools.js               # one capability-driven view per feature
+  app.js                 # navigation, model picker, settings, free-trial unlock
+```
 
-- **[React Native](https://reactnative.dev/)** - Mobile app framework
-- **[Expo](https://expo.dev/)** - Development platform and tools
-- **[TypeScript](https://www.typescriptlang.org/)** - Type-safe JavaScript
-- **[Convex](https://convex.dev/)** - Backend-as-a-Service
-- **[Venice AI](https://venice.ai/)** - Advanced AI models
-- **[React Navigation](https://reactnavigation.org/)** - Navigation library
-- **[Expo Vector Icons](https://docs.expo.dev/guides/icons/)** - Icon library
+The proxy resolves the API key per request — a `x-venice-key` header (bring-your-own)
+takes priority, falling back to the server's `VENICE_API_KEY`. Binary responses
+(images, audio, video) are returned to the client as base64 data URLs for uniform,
+CORS-free rendering, downloading and chaining.
 
-## 📖 API Documentation
-
-### Venice AI Models
-
-| Model | Context | Pricing (per 1M tokens) | Best For |
-|-------|---------|-------------------------|----------|
-| Venice Small | 32K | $0.15 in / $0.60 out | Quick responses |
-| Venice Medium | 131K | $0.50 in / $2.00 out | Balanced tasks |
-| Venice Large | 131K | $1.50 in / $6.00 out | Complex reasoning |
-| Venice Reasoning | 32K | $0.50 in / $2.00 out | Logic problems |
-| DeepSeek R1 | 131K | $3.50 in / $14.00 out | Advanced reasoning |
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- [Venice AI](https://venice.ai/) for providing powerful AI models
-- [Convex](https://convex.dev/) for the excellent backend platform
-- [Expo](https://expo.dev/) for the amazing development experience
-- The React Native community for continuous innovation
-
-## 📞 Support
-
-If you have any questions or need help, please:
-- Open an issue on GitHub
-- Check the [documentation](https://github.com/vivmuk/vGPT/wiki)
-- Contact the maintainer
+> The `app/`, `constants/`, `types/` and `utils/` directories contain the original
+> Expo/React Native project, kept for native development. The deployed web experience
+> is the PWA in `public/`.
 
 ---
 
-**Made with ❤️ and powered by Venice AI**
+Made with ❤️ and powered by [Venice AI](https://venice.ai/).
