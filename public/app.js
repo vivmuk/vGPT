@@ -1,23 +1,26 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// vGPT app — navigation, router, model picker, settings, free-trial unlock,
-// and bootstrap. Wires the shared `nav`/`gate` hooks used by tools.js + core.js.
+// vGPT app — DIAL faceplate chrome: mode-wheel home, plate header, router,
+// cartridge model picker, service panel (settings), free-trial unlock, and
+// bootstrap. Wires the shared `nav`/`gate` hooks used by tools.js + core.js.
+// The wiring (goTo, NAV, model selection, settings, trial) is unchanged — only
+// the markup/interaction is the hardware instrument.
 // ═══════════════════════════════════════════════════════════════════════════
 import {
   $, el, icon, clear, toast,
   state, loadState, saveState, api,
-  modelsByType, findModel, modelName, modelLabel, selectedFor, priceHint, textCaps,
+  modelsByType, findModel, modelName, modelLabel, selectedFor, priceHint,
   openSheet, closeSheet, nav, gate,
   initAssets, onAssets, listAssets, clearAssets,
   FREE_LIMIT, REF_LINK, usingSharedKey, freeLeft, setKey,
 } from './core.js';
-import { views, currentModelContext, newChat } from './tools.js';
+import { views, newChat } from './tools.js';
 
 const NAV = [
-  { k: 'chat', label: 'Chat', icon: 'chat', accent: '--c-chat' },
-  { k: 'image', label: 'Image', icon: 'image', accent: '--c-image' },
-  { k: 'video', label: 'Video', icon: 'video', accent: '--c-video' },
-  { k: 'audio', label: 'Audio', icon: 'music', accent: '--c-music' },
-  { k: 'library', label: 'Library', icon: 'library', accent: '--c-library' },
+  { k: 'chat', label: 'Chat', icon: 'chat' },
+  { k: 'image', label: 'Image', icon: 'image' },
+  { k: 'video', label: 'Video', icon: 'video' },
+  { k: 'audio', label: 'Audio', icon: 'music' },
+  { k: 'library', label: 'Library', icon: 'cassette' },
 ];
 
 // ── render ──────────────────────────────────────────────────────────────────
@@ -29,19 +32,23 @@ function render() {
   const sameTool = renderedTool === tool;
   const scrollTop = sameTool && previousScroll ? previousScroll.scrollTop : 0;
   const followBottom = sameTool && previousScroll ? previousScroll.scrollHeight - previousScroll.scrollTop - previousScroll.clientHeight < 56 : false;
-  const navMeta = NAV.find(n => n.k === tool) || NAV[0];
-  document.documentElement.style.setProperty('--nav-accent', `var(${navMeta.accent})`);
 
-  // main view
+  renderStat();
+  renderPlate();
+
   const main = clear($('#main'));
   const section = el('section', { class: 'view active' });
-  try { section.appendChild(views[tool]()); }
-  catch (e) { console.error(e); section.appendChild(el('div', { class: 'pad' }, el('div', { class: 'notice', text: 'Something went wrong rendering this tool.' }))); }
+  try {
+    if (tool === 'home') section.appendChild(renderHome());
+    else section.appendChild(views[tool]());
+  } catch (e) {
+    console.error(e);
+    section.appendChild(el('div', { class: 'pad' }, el('div', { class: 'notice', text: 'Something went wrong rendering this screen.' })));
+  }
   main.appendChild(section);
   renderedTool = tool;
 
-  // Progress polling and streamed tokens rebuild the view. Preserve the user's
-  // reading position unless they were already following the newest content.
+  // preserve reading position across streamed/polled re-renders
   const nextScroll = $('#main .scroll');
   if (sameTool && nextScroll) {
     const restore = () => { nextScroll.scrollTop = followBottom ? nextScroll.scrollHeight : scrollTop; };
@@ -49,43 +56,115 @@ function render() {
     cancelAnimationFrame(scrollRestoreFrame);
     scrollRestoreFrame = requestAnimationFrame(restore);
   }
+}
 
-  renderNav();
-  renderHeader();
+// status bar (decorative + live clock + free-trial meter)
+function renderStat() {
+  const bar = clear($('#statBar'));
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  bar.appendChild(el('span', { text: `${hh}:${mm}` }));
+  bar.appendChild(el('span', { class: 'r' }, [
+    usingSharedKey() ? el('span', { style: { color: 'var(--led)' }, text: `◴ ${freeLeft()} FREE` }) : el('span', { text: '∞' }),
+    el('span', { text: '▮▮▮▯' }),
+  ]));
 }
-function renderNav() {
-  const navEl = clear($('#nav'));
-  NAV.forEach(n => {
-    navEl.appendChild(el('button', {
-      class: state.tool === n.k ? 'active' : '',
-      style: { '--nav-accent': `var(${n.accent})` },
-      html: `${icon(n.icon, 22)}<span>${n.label}</span>`,
-      onclick: () => goTo(n.k),
-    }));
+
+// plate header: logo (→home), screenprint, power LED, settings screw, decorative screws
+function renderPlate() {
+  const plate = clear($('#plate'));
+  plate.appendChild(el('div', {}, [
+    el('button', { class: 'logo', html: 'v<span>GPT</span>', onclick: () => goTo('home'), title: 'Mode wheel' }),
+    el('div', { class: 'screen-print', text: 'venice instrument' }),
+  ]));
+  plate.appendChild(el('div', { class: 'pwr' }, [el('span', { class: 'led' }), 'PWR']));
+  plate.appendChild(el('button', { class: 'util', html: icon('settings', 17), title: 'Service panel', onclick: openSettings }));
+  plate.appendChild(el('div', { class: 'scr-row' }, [el('span', { class: 'screw' }), el('span', { class: 'screw' })]));
+}
+
+// ── home: mode wheel ──────────────────────────────────────────────────────────
+let wheelIndex = 0;
+function renderHome() {
+  // start the pointer on the last tool used (if any)
+  const lastIdx = NAV.findIndex(n => n.k === state._lastTool);
+  if (lastIdx >= 0) wheelIndex = lastIdx;
+
+  const frag = document.createDocumentFragment();
+
+  const lcd = el('div', { class: 'lcd' }, [
+    el('div', { class: 'ltop' }, [el('span', { text: 'MODE SELECT' }), el('span', { class: usingSharedKey() ? 'armed' : '', text: usingSharedKey() ? `◴ ${freeLeft()} FREE` : '∞ KEY' })]),
+    el('div', { class: 'big', id: 'wheelBig', text: NAV[wheelIndex].label.toUpperCase() }),
+    el('div', { class: 'sub', text: 'turn wheel · press to enter' }),
+  ]);
+  frag.appendChild(lcd);
+
+  const wrap = el('div', { class: 'wheelwrap' });
+  const modes = el('div', { class: 'modes' });
+
+  // labels around a 300px ring
+  const R = 124, cx = 150, cy = 150;
+  const labelEls = NAV.map((n, i) => {
+    const theta = (-90 + i * 72) * Math.PI / 180;
+    const x = cx + R * Math.cos(theta);
+    const y = cy + R * Math.sin(theta);
+    const lab = el('button', {
+      class: 'ml' + (i === wheelIndex ? ' on' : ''),
+      style: { left: x + 'px', top: y + 'px', transform: 'translate(-50%,-50%)' },
+      html: `<i class="mi">${icon(n.icon, 18)}</i>${n.label}`,
+      onclick: () => { i === wheelIndex ? enter() : select(i); },
+    });
+    return lab;
   });
-}
-function renderHeader() {
-  const ctx = currentModelContext();
-  const pill = $('#modelPill');
-  const txt = $('#modelPillText');
-  if (ctx.show && ctx.type) {
-    pill.style.display = '';
-    const id = selectedFor(ctx.type);
-    txt.textContent = id ? modelName(id) : 'Select model';
-    pill.onclick = () => openModelPicker(ctx.type);
-  } else {
-    pill.style.display = 'none';
+  labelEls.forEach(l => modes.appendChild(l));
+
+  const ptr = el('div', { class: 'ptr' });
+  const hubIcon = el('i', { class: 'ic', html: icon(NAV[wheelIndex].icon, 26) });
+  const hub = el('div', { class: 'hub' }, [hubIcon, el('div', { class: 'hl', text: 'ENTER' })]);
+  const wheel = el('div', { class: 'wheel' }, [ptr, hub]);
+  modes.appendChild(wheel);
+
+  const setPointer = () => { ptr.style.transform = `translateX(-50%) rotate(${wheelIndex * 72}deg)`; ptr.style.transformOrigin = '50% 79px'; };
+  setPointer();
+
+  function select(i) {
+    wheelIndex = ((i % NAV.length) + NAV.length) % NAV.length;
+    labelEls.forEach((l, idx) => l.classList.toggle('on', idx === wheelIndex));
+    hubIcon.innerHTML = icon(NAV[wheelIndex].icon, 26);
+    $('#wheelBig').textContent = NAV[wheelIndex].label.toUpperCase();
+    setPointer();
   }
-  // free-trial chip
-  let chip = $('#freeChip');
-  if (usingSharedKey()) {
-    if (!chip) { chip = el('button', { id: 'freeChip', class: 'header-pill', style: { background: 'var(--accent-soft)', borderColor: 'var(--accent)' } }); $('#settingsBtn').before(chip); }
-    chip.innerHTML = `${icon('zap', 14)} <span>${freeLeft()} free</span>`;
-    chip.onclick = () => openUnlock('limit');
-  } else if (chip) { chip.remove(); }
+  function enter() { goTo(NAV[wheelIndex].k); }
+  hub.addEventListener('click', enter);
+
+  // drag the wheel to rotate the pointer toward the nearest mode
+  let dragging = false;
+  const pick = (clientX, clientY) => {
+    const r = wheel.getBoundingClientRect();
+    const ang = Math.atan2(clientY - (r.top + r.height / 2), clientX - (r.left + r.width / 2)) * 180 / Math.PI; // -180..180, 0 = east
+    // mode i sits at (-90 + i*72) degrees
+    let best = 0, bestD = 999;
+    NAV.forEach((_, i) => {
+      const t = -90 + i * 72;
+      let d = Math.abs(((ang - t + 540) % 360) - 180);
+      if (d < bestD) { bestD = d; best = i; }
+    });
+    if (best !== wheelIndex) select(best);
+  };
+  wheel.addEventListener('pointerdown', e => { dragging = true; wheel.setPointerCapture?.(e.pointerId); });
+  wheel.addEventListener('pointermove', e => { if (dragging) pick(e.clientX, e.clientY); });
+  const endDrag = () => { dragging = false; };
+  wheel.addEventListener('pointerup', endDrag);
+  wheel.addEventListener('pointercancel', endDrag);
+
+  wrap.appendChild(modes);
+  wrap.appendChild(el('div', { class: 'hint', text: '◀ FIVE TOOLS · ONE DIAL ▶' }));
+  frag.appendChild(wrap);
+  return frag;
 }
 
 function goTo(tool, opts = {}) {
+  if (tool !== 'home') state._lastTool = tool;
   state.tool = tool;
   if (opts.mode && state.mode[tool] !== undefined) state.mode[tool] = opts.mode;
   if (tool === 'image' && opts.mode) state.mode.image = opts.mode;
@@ -94,7 +173,7 @@ function goTo(tool, opts = {}) {
   render();
 }
 
-// ── model picker ──────────────────────────────────────────────────────────────
+// ── cartridge model picker ────────────────────────────────────────────────────
 function modelBadges(m) {
   const out = [];
   (m.model_spec?.traits || []).slice(0, 2).forEach(t => out.push({ t, hot: /default|fastest|most/i.test(t) }));
@@ -116,17 +195,18 @@ function openModelPicker(type) {
   const list = modelsByType(type);
   const current = selectedFor(type);
   const body = el('div', {});
-  if (!list.length) { body.appendChild(el('div', { class: 'notice', text: 'No models of this type are available with the current key.' })); openSheet('Select model', body); return; }
+  if (!list.length) { body.appendChild(el('div', { class: 'notice', text: 'No models of this type are available with the current key.' })); openSheet('Cartridge rack', body); return; }
 
-  const search = el('input', { type: 'text', class: 'search-input', placeholder: `Search ${list.length} models…` });
-  const listEl = el('div', {});
+  body.appendChild(el('div', { class: 'hint', text: `Insert a cartridge — ${list.length} loaded for this slot.` }));
+  const search = el('input', { type: 'search', class: 'search-input', placeholder: `Search ${list.length} cartridges…` });
+  const listEl = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } });
   const draw = (q = '') => {
     clear(listEl);
     const ql = q.toLowerCase();
     list.filter(m => !ql || modelLabel(m).toLowerCase().includes(ql) || m.id.toLowerCase().includes(ql) || (m.model_spec?.description || '').toLowerCase().includes(ql))
       .forEach(m => {
         const sel = m.id === current;
-        listEl.appendChild(el('button', { class: 'model-item' + (sel ? ' sel' : ''), onclick: () => { state.selected[type] = m.id; saveState(); closeSheet(); render(); } }, [
+        listEl.appendChild(el('button', { class: 'model-item' + (sel ? ' sel' : ''), onclick: () => { state.selected[type] = m.id; saveState(); closeSheet(); toast(`Loaded ${modelLabel(m)}`, 'ok'); render(); } }, [
           el('div', { class: 'mi-body' }, [
             el('div', { class: 'mi-name', text: modelLabel(m) }),
             el('div', { class: 'mi-id', text: m.id }),
@@ -141,17 +221,16 @@ function openModelPicker(type) {
   search.addEventListener('input', e => draw(e.target.value));
   draw();
   body.appendChild(search); body.appendChild(listEl);
-  openSheet('Select model', body);
+  openSheet('Cartridge rack', body);
 }
 
-// ── settings ──────────────────────────────────────────────────────────────────
+// ── service panel (settings) ──────────────────────────────────────────────────
 function openSettings() {
   const body = el('div', {});
 
-  // API key
   const keyInput = el('input', { type: 'text', placeholder: 'Paste your Venice API key…', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' });
   keyInput.value = state.key || '';
-  const keyCard = el('div', { class: 'card' }, [
+  body.appendChild(el('div', { class: 'card' }, [
     el('div', { class: 'panel-title', html: `${icon('key', 13)} Your Venice API key` }),
     keyInput,
     el('div', { class: 'hint', text: 'Stored only on this device and sent directly to Venice. Use a key you generated, or one shared with you.' }),
@@ -159,10 +238,8 @@ function openSettings() {
       el('button', { class: 'btn primary', style: { flex: '1' }, html: `${icon('check', 18)} Save key`, onclick: () => { setKey(keyInput.value); toast(state.key ? 'Key saved — unlimited access' : 'Key cleared'); render(); closeSheet(); } }),
       state.key ? el('button', { class: 'btn', html: icon('trash', 18), title: 'Remove key', onclick: () => { setKey(''); keyInput.value = ''; toast('Key removed'); render(); } }) : null,
     ].filter(Boolean)),
-  ]);
-  body.appendChild(keyCard);
+  ]));
 
-  // free trial status
   if (usingSharedKey()) {
     body.appendChild(el('div', { class: 'card' }, [
       el('div', { class: 'panel-title', html: `${icon('zap', 13)} Free trial` }),
@@ -171,7 +248,7 @@ function openSettings() {
       el('a', { class: 'btn full', style: { marginTop: '12px' }, href: REF_LINK, target: '_blank', rel: 'noopener', html: `${icon('key', 18)} Get your own Venice key` }),
     ]));
   } else if (state.key) {
-    const balCard = el('div', { class: 'card' }, [
+    body.appendChild(el('div', { class: 'card' }, [
       el('div', { class: 'panel-title', html: `${icon('cpu', 13)} Account` }),
       el('div', { id: 'balLine', style: { fontSize: '14px' }, text: 'Using your own key — unlimited access.' }),
       el('button', { class: 'btn full', style: { marginTop: '12px' }, html: `${icon('refresh', 18)} Check balance`, onclick: async (e) => {
@@ -179,11 +256,9 @@ function openSettings() {
         try { const b = await api.balance(); const usd = b?.balances?.usd, diem = b?.balances?.diem; $('#balLine').textContent = `Balance — ${usd != null ? '$' + usd.toFixed(2) : ''}${usd != null && diem != null ? ' · ' : ''}${diem != null ? diem.toFixed(1) + ' DIEM' : ''}` || 'Balance unavailable'; }
         catch (err) { toast(err.message, 'err'); } finally { btn.disabled = false; }
       } }),
-    ]);
-    body.appendChild(balCard);
+    ]));
   }
 
-  // data
   body.appendChild(el('div', { class: 'card' }, [
     el('div', { class: 'panel-title', html: `${icon('layers', 13)} Data` }),
     el('div', { class: 'inline-actions' }, [
@@ -192,8 +267,8 @@ function openSettings() {
     ]),
   ]));
 
-  body.appendChild(el('div', { class: 'notice', style: { marginTop: '4px' }, html: `vGPT · multimodal super app powered by <a href="https://venice.ai" target="_blank" rel="noopener">Venice AI</a>. Private by design — your media stays on your device.` }));
-  openSheet('Settings', body);
+  body.appendChild(el('div', { class: 'notice', html: `vGPT · Venice instrument powered by <a href="https://venice.ai" target="_blank" rel="noopener">Venice AI</a>. Private by design — your media stays on your device.` }));
+  openSheet('Service panel', body);
 }
 
 // ── free-trial unlock sheet ────────────────────────────────────────────────────
@@ -201,8 +276,8 @@ function openUnlock(reason) {
   const body = el('div', {});
   const limit = reason === 'limit';
   body.appendChild(el('div', { class: 'center-col', style: { textAlign: 'center', marginBottom: '8px' } }, [
-    el('div', { class: 'orb', style: { width: '76px', height: '76px' }, html: icon('key', 32) }),
-    el('h2', { style: { fontFamily: 'var(--font-display)', fontSize: '20px', marginTop: '14px' }, text: limit ? 'You’ve used your free queries' : 'Add a Venice API key' }),
+    el('div', { class: 'orb', html: icon('key', 32) }),
+    el('h2', { style: { fontFamily: 'var(--sans)', fontWeight: '800', fontSize: '20px', marginTop: '14px' }, text: limit ? 'You’ve used your free queries' : 'Add a Venice API key' }),
     el('p', { class: 'muted', style: { fontSize: '14px', marginTop: '6px', maxWidth: '340px' }, text: limit ? `You’ve reached the ${FREE_LIMIT}-query free trial. Paste a Venice API key to keep creating — it’s unlimited and uses your own credits.` : 'This app needs a Venice API key. Paste one below to get started.' }),
   ]));
 
@@ -213,7 +288,7 @@ function openUnlock(reason) {
   body.appendChild(el('button', { class: 'btn primary full', style: { marginTop: '12px' }, html: `${icon('check', 18)} Save key & continue`, onclick: save }));
 
   body.appendChild(el('div', { class: 'divider' }));
-  body.appendChild(el('div', { style: { textAlign: 'center', fontSize: '13px', color: 'var(--text-3)', marginBottom: '10px' }, text: 'Don’t have a key yet?' }));
+  body.appendChild(el('div', { style: { textAlign: 'center', fontSize: '13px', color: 'var(--ink-2)', marginBottom: '10px' }, text: 'Don’t have a key yet?' }));
   body.appendChild(el('a', { class: 'btn full', href: REF_LINK, target: '_blank', rel: 'noopener', html: `${icon('key', 18)} Get your own Venice key — free` }));
   body.appendChild(el('div', { class: 'hint', style: { textAlign: 'center', marginTop: '10px' }, text: 'A key shared with you by anyone works too — just paste it above.' }));
   openSheet(limit ? 'Keep creating' : 'Welcome to vGPT', body);
@@ -223,29 +298,26 @@ function openUnlock(reason) {
 async function boot() {
   loadState();
 
-  // header / chrome icons
-  $('#brandMark').innerHTML = icon('sparkles', 16);
-  $('#settingsBtn').innerHTML = icon('settings', 20);
   $('#sheetClose').innerHTML = icon('x', 22);
-  $('#settingsBtn').onclick = openSettings;
-  $('.brand').onclick = () => goTo('chat');
   $('#sheetClose').onclick = closeSheet;
   $('#scrim').addEventListener('click', e => { if (e.target.id === 'scrim') closeSheet(); });
 
-  // wire shared hooks used by tools.js / core.js
+  // shared hooks used by tools.js / core.js
   nav.goTo = goTo;
   nav.refresh = render;
   nav.openModelPicker = openModelPicker;
   nav.openSheet = openSheet;
   nav.closeSheet = closeSheet;
+  nav.openSettings = openSettings;
   gate.onExceeded = openUnlock;
+
+  // live clock in the status bar
+  setInterval(renderStat, 30000);
 
   render();
 
-  // assets (best-effort persistence)
   initAssets().then(() => { onAssets(() => { if (state.tool === 'library') render(); }); });
 
-  // config + models
   try { state.config = await api.config(); } catch {}
   try {
     const res = await api.models('all');
@@ -262,10 +334,8 @@ async function boot() {
     }
   }
 
-  // image styles (best-effort)
   try { const s = await api.styles(); state.styles = Array.isArray(s?.data) ? s.data : []; if (state.tool === 'image') render(); } catch {}
 
-  // first-run welcome if there is genuinely no usable key
   if (!state.config.sharedKey && !state.key) openUnlock('nokey');
 }
 
