@@ -42,6 +42,72 @@ function workingLine(text = 'PROCESSING') {
     el('span', { class: 'wt', text }),
   ]);
 }
+
+// flavor text cycled in the chat "thinking" indicator while a response streams in
+const SURAT_FACTS = [
+  'Surat sits on the banks of the Tapi River in Gujarat, India.',
+  'Surat is nicknamed the "Diamond City" — a huge share of the world\'s diamonds are cut and polished here.',
+  'Surat is also called the "Silk City" for its centuries-old textile and sari weaving trade.',
+  'In the 16th and 17th centuries, Surat was one of the busiest seaports on India\'s western coast.',
+  'The British East India Company opened one of its earliest Indian trading posts in Surat.',
+  'Dutch and French trading companies also ran factories in Surat during the Mughal era.',
+  'Surat was once a major embarkation point for pilgrims sailing to Mecca, earning it "Bab-ul-Mecca."',
+  'The Tapi River has shaped Surat\'s trade and culture for centuries.',
+  'Surat Castle, built in the 16th century, once defended the port from naval raids.',
+  'Surat is home to a notable Parsi community whose ancestors helped build its trade and architecture.',
+  'Surat\'s old town is divided into close-knit historic neighborhoods called "gams."',
+  'Surat is a major hub for man-made fiber (MMF) textiles in India.',
+  'The Surat Diamond Bourse was built to be one of the largest office buildings in the world by floor area.',
+  'Traditional silk weaves like Tanchoi and Gajee are part of Surat\'s textile heritage.',
+  'Surat has ranked highly in national cleanliness and urban-governance surveys.',
+  'The Dutch Garden and an old Dutch cemetery are remnants of Surat\'s European trading past.',
+  'Surat is one of India\'s fastest-growing cities by population and economic output.',
+  'Surat\'s diamond industry trains and employs a very large local workforce of cutters and polishers.',
+  'Surat is served by rail, road, and a growing international airport.',
+  'Local favorites like Surati Locho, Ghari, and Surati Undhiyu are beloved street foods.',
+  'Surat has invested heavily in sustainable urban-planning initiatives across Gujarat.',
+  'Bridges across the Tapi River, old and new, are landmark crossings in the city.',
+  'Historic markets like Chowk Bazaar reflect centuries of mercantile tradition in Surat.',
+  'The restored Surat Castle (Old Fort) now houses a heritage and lifestyle museum.',
+  'Surat played a key historical role in trade between India and the Middle East.',
+  'Many Surat diamond traders have business ties to Antwerp, Belgium — another major diamond hub.',
+  'Surat\'s wholesale textile markets, like those on Ring Road, are among the largest in India.',
+  'A 1990s plague outbreak prompted major civic infrastructure reforms in Surat.',
+  'Surat\'s Tapi riverfront development added new recreational and cultural public spaces.',
+  'Surat is sometimes known by the old name "Suryapur."',
+  'A sizeable community of artisans in Surat specializes in zari gold and silver thread embroidery.',
+  'The nearby Hazira area has grown into an industrial hub with petrochemical and gas facilities.',
+  'Surat\'s economy benefits from its proximity to coastal trade routes near Hazira.',
+  'Surat anchors a rapidly urbanizing metropolitan region in Gujarat.',
+  'Engineering and textile-focused colleges in Surat support its skilled industrial workforce.',
+  'Surat\'s Navratri celebrations bring large crowds out for garba and dandiya nights.',
+  'Diamond polishing units in Surat are concentrated in areas like Varachha and Katargam.',
+  'Evening food markets along Surat\'s riverfront are popular for street-food culture.',
+  'Surat\'s airport connects the city to domestic and select international routes.',
+  'Surat has a long tradition of weaving intricately patterned sarees sold across India.',
+  'A large share of diamonds processed worldwide pass through Surat\'s cutting workshops.',
+  'Surat has built flyovers and a bus rapid transit system to manage growing traffic.',
+  'Mughal-era structures in Surat reflect its historical importance as a trading port.',
+  'The tidal Tapi River once let ships dock close to Surat\'s old port areas.',
+  'Surat\'s textile and diamond trades have made it one of India\'s wealthiest cities per capita.',
+  'Surat has long-standing Jain and Hindu merchant communities tied to its trading history.',
+  'Diamond and textile workers from across India have shaped Surat\'s diverse local culture.',
+  'Surat has been promoted as a model for public-private partnerships in urban services.',
+  'Riverside promenades and gardens in Surat are popular evening gathering spots.',
+  'Pockets of old Surat still preserve traditional havelis and wooden architecture.',
+];
+function thinkingLine(msg) {
+  const idx = ((msg.factSeed || 0) + (msg.factTick || 0)) % SURAT_FACTS.length;
+  const elapsed = Math.max(0, Math.round((Date.now() - (msg.factStart || Date.now())) / 1000));
+  return el('div', { class: 'thinking' }, [
+    el('div', { class: 'work' }, [
+      el('span', { class: 'eq' }, [el('i'), el('i'), el('i'), el('i'), el('i')]),
+      el('span', { class: 'wt', text: 'THINKING' }),
+      el('span', { class: 'wt-time', text: `${elapsed}s` }),
+    ]),
+    el('div', { class: 'fact', text: SURAT_FACTS[idx] }),
+  ]);
+}
 function blobToDataURL(blob) {
   return new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(blob); });
 }
@@ -427,7 +493,7 @@ function renderMsg(msg) {
     return wrap;
   }
   const wrap = el('div', {});
-  if (msg.streaming && !msg.content) wrap.appendChild(el('div', { class: 'ca', html: '◆ <span style="opacity:.6">▌</span>' }));
+  if (msg.streaming && !msg.content) wrap.appendChild(thinkingLine(msg));
   else wrap.appendChild(el('div', { class: 'ca', html: `◆ ${mdToHtml(msg.content || '')}` }));
   if (msg.reasoning) wrap.appendChild(el('details', { class: 'reasoning' }, [el('summary', { text: '› reasoning' }), el('div', { class: 'r-body', text: msg.reasoning })]));
   if (!msg.streaming && msg.content) {
@@ -452,9 +518,17 @@ async function runChat() {
   const id = selectedFor('text');
   const m = findModel(id);
   const caps = textCaps(m);
-  const assistant = { role: 'assistant', content: '', reasoning: '', streaming: true, metrics: null };
+  const assistant = {
+    role: 'assistant', content: '', reasoning: '', streaming: true, metrics: null,
+    factStart: Date.now(), factSeed: Math.floor(Math.random() * SURAT_FACTS.length), factTick: 0,
+  };
   chat.messages.push(assistant);
   chat.streaming = true; nav.refresh();
+  const factTimer = setInterval(() => {
+    if (assistant.content) { clearInterval(factTimer); return; }
+    assistant.factTick = (assistant.factTick || 0) + 1;
+    nav.refresh();
+  }, 2400);
 
   const vp = { include_venice_system_prompt: true };
   if (caps.webSearch && F.chat.webSearch !== 'off') { vp.enable_web_search = F.chat.webSearch; vp.enable_web_citations = true; }
@@ -489,6 +563,7 @@ async function runChat() {
     if (e.name === 'AbortError') assistant.content += assistant.content ? '' : '_(stopped)_';
     else assistant.content = `⚠️ ${e.message}`;
   } finally {
+    clearInterval(factTimer);
     assistant.streaming = false; chat.streaming = false; chat.abort = null; nav.refresh();
   }
 }

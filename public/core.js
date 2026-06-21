@@ -92,23 +92,113 @@ export function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// minimal, safe markdown for chat
+// ── small GFM-ish markdown renderer for chat ────────────────────────────────
+// Supports: headings, bold/italic/strikethrough, inline + fenced code, links,
+// images, blockquotes, ordered/unordered lists, horizontal rules and tables.
+function inlineMd(raw) {
+  const codes = [];
+  let s = String(raw).replace(/`([^`\n]+)`/g, (_m, c) => { codes.push(escapeHtml(c)); return `\x01C${codes.length - 1}\x01`; });
+  s = escapeHtml(s)
+    .replace(/!\[([^\]]*)\]\((data:image\/[^)]+|https?:\/\/[^)]+)\)/g, '<img alt="$1" src="$2" />')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/__([^_]+)__/g, '<strong>$1</strong>')
+    .replace(/~~([^~]+)~~/g, '<del>$1</del>')
+    .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>')
+    .replace(/(^|[^_\w])_([^_\n]+)_(?!_)/g, '$1<em>$2</em>');
+  return s.replace(/\x01C(\d+)\x01/g, (_m, i) => `<code>${codes[+i]}</code>`);
+}
+
+function splitTableRow(line) {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+}
+function tableAlign(sepCell) {
+  const c = sepCell.trim();
+  if (c.startsWith(':') && c.endsWith(':')) return 'center';
+  if (c.endsWith(':')) return 'right';
+  if (c.startsWith(':')) return 'left';
+  return '';
+}
+function renderTable(headerCells, aligns, rows) {
+  const cell = (tag, c, idx) => `<${tag}${aligns[idx] ? ` style="text-align:${aligns[idx]}"` : ''}>${inlineMd(c)}</${tag}>`;
+  const thead = `<tr>${headerCells.map((c, i) => cell('th', c, i)).join('')}</tr>`;
+  const tbody = rows.map(r => `<tr>${r.map((c, i) => cell('td', c, i)).join('')}</tr>`).join('');
+  return `<div class="md-table-wrap"><table class="md-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
+}
+
 export function mdToHtml(src) {
   const fences = [];
-  let s = String(src).replace(/```(\w*)\n?([\s\S]*?)```/g, (_m, lang, code) => {
-    fences.push(`<pre><code>${escapeHtml(code.replace(/\n$/, ''))}</code></pre>`);
-    return ` ${fences.length - 1} `;
+  const withFences = String(src).replace(/```(\w*)\n?([\s\S]*?)```/g, (_m, lang, code) => {
+    fences.push(`<pre><code${lang ? ` class="lang-${escapeHtml(lang)}"` : ''}>${escapeHtml(code.replace(/\n$/, ''))}</code></pre>`);
+    return `\x01F${fences.length - 1}\x01`;
   });
-  s = escapeHtml(s)
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-    .replace(/^### (.*)$/gm, '<strong>$1</strong>')
-    .replace(/^## (.*)$/gm, '<strong>$1</strong>')
-    .replace(/!\[[^\]]*\]\((data:image\/[^)]+|https?:\/\/[^)]+)\)/g, '<img src="$1" />')
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/\n/g, '<br>');
-  return s.replace(/ (\d+) /g, (_m, i) => fences[+i]);
+
+  const lines = withFences.split('\n');
+  const out = [];
+  let para = [];
+  const flushPara = () => { if (para.length) { out.push(`<p>${para.map(inlineMd).join('<br>')}</p>`); para = []; } };
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (/^\s*$/.test(line)) { flushPara(); i++; continue; }
+
+    const fenceMatch = line.match(/^\s*\x01F(\d+)\x01\s*$/);
+    if (fenceMatch) { flushPara(); out.push(fences[+fenceMatch[1]]); i++; continue; }
+
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) { flushPara(); const lvl = h[1].length; out.push(`<h${lvl}>${inlineMd(h[2].trim())}</h${lvl}>`); i++; continue; }
+
+    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) { flushPara(); out.push('<hr>'); i++; continue; }
+
+    if (/\|/.test(line) && i + 1 < lines.length && /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/.test(lines[i + 1])) {
+      flushPara();
+      const headerCells = splitTableRow(line);
+      const aligns = splitTableRow(lines[i + 1]).map(tableAlign);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && /\|/.test(lines[i]) && !/^\s*$/.test(lines[i])) { rows.push(splitTableRow(lines[i])); i++; }
+      out.push(renderTable(headerCells, aligns, rows));
+      continue;
+    }
+
+    if (/^\s*>\s?/.test(line)) {
+      flushPara();
+      const qlines = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) { qlines.push(lines[i].replace(/^\s*>\s?/, '')); i++; }
+      out.push(`<blockquote>${qlines.map(inlineMd).join('<br>')}</blockquote>`);
+      continue;
+    }
+
+    if (/^\s*[-*+]\s+(.*)$/.test(line)) {
+      flushPara();
+      const items = [];
+      while (i < lines.length) {
+        const m2 = lines[i].match(/^\s*[-*+]\s+(.*)$/);
+        if (!m2) break;
+        items.push(inlineMd(m2[1])); i++;
+      }
+      out.push(`<ul>${items.map(it => `<li>${it}</li>`).join('')}</ul>`);
+      continue;
+    }
+
+    if (/^\s*\d+[.)]\s+(.*)$/.test(line)) {
+      flushPara();
+      const items = [];
+      while (i < lines.length) {
+        const m2 = lines[i].match(/^\s*\d+[.)]\s+(.*)$/);
+        if (!m2) break;
+        items.push(inlineMd(m2[1])); i++;
+      }
+      out.push(`<ol>${items.map(it => `<li>${it}</li>`).join('')}</ol>`);
+      continue;
+    }
+
+    para.push(line); i++;
+  }
+  flushPara();
+  return out.join('');
 }
 
 export function fileToDataURL(file) {
@@ -238,6 +328,8 @@ export const api = {
   fetchMedia(url) { return this.post('/api/fetch-media', { url }); },
 };
 
+// Chat always streams — the server defaults to streaming too (stream !== false),
+// so this keeps the wire format consistent end to end regardless of caller input.
 async function streamChat(body, { onDelta, onReasoning, onUsage, signal }) {
   const r = await fetch('/api/chat', { method: 'POST', headers: apiHeaders(), body: JSON.stringify({ ...body, stream: true }), signal });
   if (!r.ok) { const t = await r.text(); let d; try { d = JSON.parse(t); } catch { d = { error: t }; } const e = new Error(errMessage(d) || `Chat failed (${r.status})`); e.status = r.status; throw e; }
