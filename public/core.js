@@ -636,6 +636,74 @@ export function pickImage({ title = 'Choose image' } = {}) {
   });
 }
 
+// ── Seedance face-media consent ─────────────────────────────────────────────
+// Venice returns HTTP 409 with a `consent_flow` when a Seedance image-/reference-
+// to-video request contains a human face. Detect that response (attached to the
+// thrown error as e.status / e.data by jsonOrThrow) and return { flow, roles,
+// policy }, or null if this error is something else.
+export function consentNeeded(e) {
+  const d = e && e.data;
+  if (!d || e.status !== 409) return null;
+  const code = d.error && typeof d.error === 'object' ? d.error.code : '';
+  if (!d.consent_flow && code !== 'needs_consent') return null;
+  return {
+    flow: d.consent_flow || 'seedance',
+    roles: Array.isArray(d.face_media_roles) ? d.face_media_roles : [],
+    policy: (d.consent && d.consent.policy_text) || '',
+  };
+}
+
+// Show the policy text and collect the three mandatory attestations Venice
+// requires before animating media that contains a real person. Resolves to the
+// `consents.<flow>` object to resubmit, or null if the user declines/dismisses.
+export function confirmConsent({ flow = 'seedance', policy = '' } = {}) {
+  return new Promise((resolve) => {
+    const scrim = $('#scrim');
+    let settled = false, obs;
+    const finish = (v) => {
+      if (settled) return;
+      settled = true;
+      if (obs) obs.disconnect();
+      closeSheet();
+      resolve(v);
+    };
+    const attestations = [
+      ['confirmed_terms_and_privacy', 'I accept the policy above and Venice’s Terms of Service and Privacy Policy.'],
+      ['confirmed_legal_right', 'I own, or have the explicit consent of, every person whose likeness appears in this image.'],
+      ['confirmed_screening_acknowledged', 'I understand that submitted media is automatically screened.'],
+    ];
+    const checked = {};
+    const cont = el('button', {
+      class: 'btn primary', style: { flex: '1', opacity: '0.5', pointerEvents: 'none' },
+      html: `${icon('check', 18)} Confirm &amp; animate`,
+      onclick: () => finish({ [flow]: { confirmed_terms_and_privacy: true, confirmed_legal_right: true, confirmed_screening_acknowledged: true } }),
+    });
+    const sync = () => {
+      const all = attestations.every(([k]) => checked[k]);
+      cont.style.opacity = all ? '1' : '0.5';
+      cont.style.pointerEvents = all ? 'auto' : 'none';
+    };
+    const rows = attestations.map(([k, label]) => {
+      const box = el('input', { type: 'checkbox', style: { marginTop: '3px', flex: '0 0 auto' } });
+      box.addEventListener('change', () => { checked[k] = box.checked; sync(); });
+      return el('label', { style: { display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '7px 0', cursor: 'pointer', fontSize: '13px' } }, [box, el('span', { text: label })]);
+    });
+    const body = el('div', {}, [
+      el('div', { class: 'notice', text: 'This image appears to contain a person. Venice requires your confirmation before generating video that depicts a real person.' }),
+      policy ? el('div', { style: { maxHeight: '170px', overflow: 'auto', fontSize: '12px', opacity: '0.85', border: '1px solid var(--line, rgba(255,255,255,0.15))', borderRadius: '8px', padding: '10px', margin: '12px 0', whiteSpace: 'pre-wrap' }, text: policy }) : null,
+      ...rows,
+      el('div', { style: { display: 'flex', gap: '8px', marginTop: '14px' } }, [
+        el('button', { class: 'btn', style: { flex: '1' }, text: 'Cancel', onclick: () => finish(null) }),
+        cont,
+      ]),
+    ].filter(Boolean));
+    openSheet('Consent required', body);
+    // Dismissing via the close button or scrim removes .open — treat as decline.
+    obs = new MutationObserver(() => { if (!scrim.classList.contains('open')) finish(null); });
+    obs.observe(scrim, { attributes: true, attributeFilter: ['class'] });
+  });
+}
+
 // navigation hook set by app.js
 export const nav = { goTo: () => {} };
 
