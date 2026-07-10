@@ -210,6 +210,47 @@ export function fileToDataURL(file) {
   });
 }
 
+// Formats every browser + the Venice API can consume directly — no conversion needed.
+const WEB_SAFE_IMAGE = /^image\/(png|jpe?g|webp|gif|bmp)$/i;
+
+function loadImageEl(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('decode failed'));
+    img.src = src;
+  });
+}
+
+// Read any user-supplied image — including iPhone HEIC/HEIF, AVIF, TIFF, JPEG 2000,
+// etc. — and return a data URL that both the <img> preview and the Venice API can
+// use. Non-standard formats are re-encoded to JPEG/PNG via canvas (iOS Safari decodes
+// HEIC natively, so this covers the common iPhone case). If the browser can't decode
+// the format at all, we fall back to the original bytes rather than dropping the file.
+export async function imageFileToDataURL(file) {
+  const raw = await fileToDataURL(file);
+  if (WEB_SAFE_IMAGE.test(file.type || '')) return raw;
+  try {
+    const img = await loadImageEl(raw);
+    let w = img.naturalWidth, h = img.naturalHeight;
+    if (!w || !h) throw new Error('empty image');
+    // Cap the long edge so re-encoded HEIC/RAW photos don't produce huge payloads
+    // or blow past canvas size limits, while keeping full resolution when small.
+    const MAX_EDGE = 3072;
+    const scale = Math.min(1, MAX_EDGE / Math.max(w, h));
+    w = Math.round(w * scale); h = Math.round(h * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    // Preserve alpha for formats that may carry it; JPEG for opaque photos (HEIC…).
+    const alpha = /image\/(png|gif|webp|avif)/i.test(file.type || '')
+      || /\.(png|gif|webp|avif)$/i.test(file.name || '');
+    return canvas.toDataURL(alpha ? 'image/png' : 'image/jpeg', 0.92);
+  } catch {
+    return raw;
+  }
+}
+
 export function fmtUSD(n) {
   if (n == null || isNaN(n)) return '';
   if (n < 0.01) return '$' + n.toFixed(4);
@@ -576,7 +617,7 @@ export function pickImage({ title = 'Choose image' } = {}) {
       inp.value = '';
       inp.onchange = async () => {
         const f = inp.files?.[0]; if (!f) return;
-        try { done(await fileToDataURL(f)); } catch { toast('Could not read file', 'err'); done(null); }
+        try { done(await imageFileToDataURL(f)); } catch { toast('Could not read file', 'err'); done(null); }
       };
       inp.click();
     };
