@@ -14,6 +14,7 @@ import {
   imageOpts, editOpts, videoOpts, musicOpts, ttsOpts, textCaps,
   ratioToWH, WH_RATIOS, priceHint,
   addAsset, listAssets, removeAsset, pickImage, pollJob,
+  consentNeeded, confirmConsent,
 } from './core.js';
 
 // per-view form state (kept across re-renders within a session)
@@ -875,7 +876,20 @@ function viewVideo() {
       if (f.negative.trim()) body.negative_prompt = f.negative.trim();
       if (o.allowsImage && f.image) body.image_url = f.image;
       jobState.video = { stage: 'preparing' }; nav.refresh();
-      const q = await api.videoQueue(body);
+      let q;
+      try {
+        q = await api.videoQueue(body);
+      } catch (e) {
+        // Seedance image-/reference-to-video with a human face → 409 needs_consent.
+        // Collect the required attestation and resubmit the same request.
+        const consent = consentNeeded(e);
+        if (!consent) throw e;
+        const attest = await confirmConsent(consent);
+        if (!attest) throw new Error('Consent is required to animate an image that contains a person.');
+        body.consents = attest;
+        jobState.video = { stage: 'preparing' }; nav.refresh();
+        q = await api.videoQueue(body);
+      }
       if (!q.queue_id) throw new Error('Could not queue video');
       jobState.video = { stage: 'queued', status: 'waiting in queue', queueId: q.queue_id }; nav.refresh();
       const url = await pollJob('video', { model: id, queueId: q.queue_id, downloadUrl: q.download_url }, (p, status) => {
