@@ -1,0 +1,17 @@
+# vGPT is served by its own Node server (server.js), which proxies the Venice
+# API — it is not a static Netlify site and has no front-end build to run.
+#
+# Netlify was auto-detecting the Expo app and running `expo export -p web`,
+# which failed on every push and left red "Deploy failed" checks on each PR.
+# The `ignore` command below returns success, which tells Netlify to skip the
+# build entirely (deploys show as "Canceled" instead of failing). The no-op
+# `command` + static `publish` are a fallback so that if a build ever does run
+# it succeeds instead of erroring.
+#
+# To remove Netlify completely, unlink the site in the Netlify dashboard
+# (Site settings → General → Danger zone) or revoke the Netlify GitHub App's
+# access to this repository (GitHub → Settings → Applications → Netlify).
+[build]
+  ignore = "/bin/true"
+  command = "true"
+  publish = "public"
