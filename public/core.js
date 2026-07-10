@@ -707,18 +707,37 @@ export function confirmConsent({ flow = 'seedance', policy = '' } = {}) {
 // navigation hook set by app.js
 export const nav = { goTo: () => {} };
 
-// poll an async (video/music) job until complete; returns a data URL
+// poll an async (video/music) job until complete; returns a data URL.
+// Venice's /retrieve (and the short-lived download URL) can return transient
+// 500/503/429/504s or drop mid-render — all documented as retryable — so a single
+// failure must NOT abort the job. We tolerate a budget of consecutive soft
+// failures and keep polling; only a clearly terminal error (400/401/402) or an
+// exhausted budget surfaces to the user.
 export async function pollJob(kind, { model, queueId, downloadUrl }, onTick) {
   const retrieve = kind === 'video' ? api.videoRetrieve.bind(api) : api.audioRetrieve.bind(api);
   const started = Date.now();
   const MAX = 8 * 60 * 1000;
+  const MAX_SOFT_FAILS = 6;              // consecutive transient errors before giving up
+  const retryable = (e) => e && (e.status == null || e.status === 429 || e.status >= 500);
   let delay = 3500;
+  let softFails = 0;
   while (Date.now() - started < MAX) {
-    const res = await retrieve({ model, queue_id: queueId });
+    let res;
+    try {
+      res = await retrieve({ model, queue_id: queueId });
+      softFails = 0;
+    } catch (e) {
+      if (!retryable(e) || ++softFails > MAX_SOFT_FAILS) throw e;
+      if (onTick) onTick(null, 'reconnecting');
+      await new Promise(r => setTimeout(r, delay));
+      delay = Math.min(delay + 800, 8000);
+      continue;
+    }
     if (res && res.data) return res.data; // completed binary -> data URL
-    if (res && res.status === 'COMPLETED') {
-      if (downloadUrl) { const m = await api.fetchMedia(downloadUrl); return m.data; }
-      // completed but no media payload — give it one more cycle
+    if (res && res.status === 'COMPLETED' && downloadUrl) {
+      try { const m = await api.fetchMedia(downloadUrl); if (m && m.data) return m.data; }
+      catch (e) { if (!retryable(e) || ++softFails > MAX_SOFT_FAILS) throw e; }
+      // delivery URL dropped — loop and retry it
     }
     if (res && res.status && res.status !== 'COMPLETED' && onTick) {
       const avg = res.average_execution_time || 0;

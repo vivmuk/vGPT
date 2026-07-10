@@ -270,15 +270,35 @@ function downloadText(text, filename = 'vgpt-response.txt') {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+// A video result that always stays downloadable. Some Venice outputs use a codec
+// (e.g. HEVC) the browser can't decode, so the <video> renders nothing — instead of
+// a blank frame we swap in a clear message with a prominent download button. The
+// Download action below the media is always present regardless.
+function videoMedia(asset, dlName) {
+  const wrap = el('div', { class: 'video-wrap' });
+  const video = el('video', { class: 'result-media', src: asset.dataUrl, controls: 'true', playsinline: 'true', preload: 'metadata' });
+  video.addEventListener('error', () => {
+    clear(wrap);
+    wrap.appendChild(el('div', { class: 'media-fallback' }, [
+      el('div', { class: 'a-ico', html: icon('video', 26) }),
+      el('div', { class: 'mf-t', text: 'Can’t preview this video here' }),
+      el('div', { class: 'mf-s', text: 'The clip rendered fine — this browser just can’t play its codec. Download it to watch.' }),
+      el('button', { class: 'btn primary', html: `${icon('download', 16)} Download video`, onclick: () => downloadDataUrl(asset.dataUrl, dlName) }),
+    ]));
+  });
+  wrap.appendChild(video);
+  return wrap;
+}
+
 // result card with chaining actions (preserved — library + inline results)
 function resultCard(asset) {
+  const dlName = `vgpt-${asset.id}.${asset.ext || (asset.kind === 'image' ? 'png' : asset.kind === 'video' ? 'mp4' : 'mp3')}`;
   let media;
   if (asset.kind === 'image') media = el('img', { class: 'result-media img', src: asset.dataUrl });
-  else if (asset.kind === 'video') media = el('video', { class: 'result-media', src: asset.dataUrl, controls: 'true', playsinline: 'true' });
+  else if (asset.kind === 'video') media = videoMedia(asset, dlName);
   else media = el('div', { class: 'aplayer' }, [el('div', { class: 'a-ico', html: icon('music', 26) }), el('audio', { src: asset.dataUrl, controls: 'true' })]);
 
   const acts = el('div', { class: 'result-actions' });
-  const dlName = `vgpt-${asset.id}.${asset.ext || (asset.kind === 'image' ? 'png' : asset.kind === 'video' ? 'mp4' : 'mp3')}`;
   acts.appendChild(el('button', { class: 'act', html: `${icon('download', 14)} Download`, onclick: () => downloadDataUrl(asset.dataUrl, dlName) }));
   if (asset.kind === 'image') {
     acts.appendChild(el('button', { class: 'act accent', html: `${icon('wand', 14)} Edit`, onclick: () => nav.goTo('image', { mode: 'edit', handoff: { image: asset.dataUrl } }) }));
