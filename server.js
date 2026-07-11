@@ -62,18 +62,35 @@ function requireKey(req, res) {
   return key;
 }
 
-async function veniceFetch(key, endpoint, { method = 'GET', body, stream } = {}) {
+// Default fetch timeout. 95s lines up with Venice's documented ~80s average
+// for slow video models so generation completes before we give up, while still
+// cutting off hung connections that would otherwise surface as Express 500s.
+const VENICE_FETCH_TIMEOUT_MS = 95_000;
+const VENICE_VIDEO_TIMEOUT_MS = 180_000; // video / audio queue+retrieve need more headroom
+
+async function veniceFetch(key, endpoint, { method = 'GET', body, stream, timeoutMs } = {}) {
   const headers = { Authorization: `Bearer ${key}` };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (stream) headers['Accept'] = 'text/event-stream';
-  return fetch(`${VENICE_API_BASE}${endpoint}`, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  // Determine default timeout by route family.
+  const isAsync = endpoint.startsWith('/video/') || endpoint.startsWith('/audio/queue') || endpoint.startsWith('/audio/retrieve');
+  const ms = timeoutMs ?? (isAsync ? VENICE_VIDEO_TIMEOUT_MS : VENICE_FETCH_TIMEOUT_MS);
+  const ctl = new AbortController();
+  const tid = setTimeout(() => ctl.abort(), ms);
+  try {
+    return await fetch(`${VENICE_API_BASE}${endpoint}`, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: ctl.signal,
+    });
+  } finally {
+    clearTimeout(tid);
+  }
 }
 
 // Forward a JSON request and return Venice's JSON verbatim (status preserved).
+// Logs upstream errors so we can debug the 500 cascade hits on /video/retrieve.
 async function proxyJson(req, res, endpoint, method = 'POST') {
   const key = requireKey(req, res);
   if (!key) return;
@@ -83,13 +100,19 @@ async function proxyJson(req, res, endpoint, method = 'POST') {
       body: method === 'GET' ? undefined : (req.body ?? {}),
     });
     const text = await r.text();
+    if (!r.ok) {
+      console.warn(`[proxyJson ${endpoint}] upstream ${r.status}: ${text.slice(0, 300)}`);
+    }
     res.status(r.status);
     res.setHeader('Content-Type', 'application/json');
-    // Pass through useful Venice metadata headers.
     passMeta(r, res);
     res.send(text && isJson(text) ? text : JSON.stringify({ error: text || `Venice error ${r.status}` }));
   } catch (err) {
-    console.error(`proxyJson ${endpoint}:`, err.message);
+    const isAbort = err?.name === 'AbortError' || /aborted|abort/i.test(err?.message || '');
+    console.error(`proxyJson ${endpoint}: ${isAbort ? 'TIMEOUT' : ''}${err.message}`);
+    if (isAbort) {
+      return res.status(504).json({ error: 'Venice upstream timed out', endpoint });
+    }
     res.status(502).json({ error: 'Upstream request failed', details: err.message });
   }
 }
@@ -97,6 +120,10 @@ async function proxyJson(req, res, endpoint, method = 'POST') {
 // Forward a request whose successful response is binary (image/audio/video).
 // Returns JSON: { data: "data:<ctype>;base64,...", contentType, ...meta }
 // If Venice responds with JSON (status poll or error), it's passed through.
+// On non-OK upstream we read the body once and forward as a structured JSON
+// {error, status, upstreamBody} so the client can surface the actual reason
+// and so we have a server-side record when something goes wrong (helps debug
+// the "500 cascade" that hits /video/retrieve mid-poll).
 async function proxyBinary(req, res, endpoint) {
   const key = requireKey(req, res);
   if (!key) return;
@@ -107,14 +134,26 @@ async function proxyBinary(req, res, endpoint) {
 
     if (ct.includes('application/json')) {
       const text = await r.text();
+      if (!r.ok) {
+        console.warn(`[proxyBinary ${endpoint}] upstream ${r.status} (${ct}, ${text.length} bytes): ${text.slice(0, 300)}`);
+      }
       res.status(r.status).type('application/json');
       return res.send(text && isJson(text) ? text : JSON.stringify({ error: text }));
     }
     if (!r.ok) {
-      const text = await r.text();
-      return res.status(r.status).json({ error: text || `Venice error ${r.status}` });
+      const text = await r.text().catch(() => '');
+      console.warn(`[proxyBinary ${endpoint}] upstream ${r.status} non-JSON (${ct}, ${text.length} bytes): ${text.slice(0, 300)}`);
+      return res.status(r.status).json({ error: text || `Venice error ${r.status}`, status: r.status });
     }
-    const buf = Buffer.from(await r.arrayBuffer());
+    // Successful binary: only safe up to a reasonable size per response. mp4
+    // outputs rarely exceed 30MB; anything bigger is almost certainly a runaway
+    // upstream and would OOM the proxy. Forward as base64 data URL.
+    const aBuf = await r.arrayBuffer();
+    if (aBuf.byteLength > 80 * 1024 * 1024) {
+      console.error(`[proxyBinary ${endpoint}] upstream ${aBuf.byteLength} bytes exceeds 80MB cap; refusing to forward`);
+      return res.status(502).json({ error: 'Upstream payload too large', bytes: aBuf.byteLength });
+    }
+    const buf = Buffer.from(aBuf);
     const dataUrl = `data:${ct};base64,${buf.toString('base64')}`;
     res.json({
       data: dataUrl,
@@ -125,7 +164,11 @@ async function proxyBinary(req, res, endpoint) {
       balance: r.headers.get('x-balance-remaining') || undefined,
     });
   } catch (err) {
-    console.error(`proxyBinary ${endpoint}:`, err.message);
+    const isAbort = err?.name === 'AbortError' || /aborted|abort/i.test(err?.message || '');
+    console.error(`proxyBinary ${endpoint}: ${isAbort ? 'TIMEOUT' : ''}${err.message}`);
+    if (isAbort) {
+      return res.status(504).json({ error: 'Venice upstream timed out', endpoint });
+    }
     res.status(502).json({ error: 'Upstream request failed', details: err.message });
   }
 }

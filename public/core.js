@@ -713,39 +713,71 @@ export const nav = { goTo: () => {} };
 // failure must NOT abort the job. We tolerate a budget of consecutive soft
 // failures and keep polling; only a clearly terminal error (400/401/402) or an
 // exhausted budget surfaces to the user.
+// Resilient polling loop for video / audio queue+retrieve.
+// Venice's async endpoints repeatedly return 500 / 503 / 429 mid-poll even on
+// jobs that ultimately succeed — that's documented as retryable — so we tolerate
+// a generous soft-fail budget, reset it on the first 200 we see, and surface a
+// terminal error only if the retryable heuristic rejects the status, the budget
+// is exhausted, or the overall wall-clock cap (8 min) is hit.
 export async function pollJob(kind, { model, queueId, downloadUrl }, onTick) {
   const retrieve = kind === 'video' ? api.videoRetrieve.bind(api) : api.audioRetrieve.bind(api);
   const started = Date.now();
   const MAX = 8 * 60 * 1000;
-  const MAX_SOFT_FAILS = 6;              // consecutive transient errors before giving up
-  const retryable = (e) => e && (e.status == null || e.status === 429 || e.status >= 500);
+  const MAX_SOFT_FAILS = 12;             // ~12 retries across the 8-min budget handles
+                                         // Venice's documented transient 5xx noise.
+  const retryable = (e) => {
+    // Network / undici aborts come without a status — treat as retryable.
+    if (!e) return false;
+    if (e.status == null) return true;
+    if (e.status === 408 || e.status === 425 || e.status === 429) return true;
+    if (e.status >= 500 && e.status <= 599) return true;
+    return false;
+  };
   let delay = 3500;
+  const jitter = () => Math.floor(Math.random() * 400);
   let softFails = 0;
   while (Date.now() - started < MAX) {
     let res;
+    let attemptFailed = false;
     try {
       res = await retrieve({ model, queue_id: queueId });
-      softFails = 0;
+      softFails = 0; // any successful response (PROCESSING / COMPLETED binary) resets the budget
     } catch (e) {
-      if (!retryable(e) || ++softFails > MAX_SOFT_FAILS) throw e;
-      if (onTick) onTick(null, 'reconnecting');
-      await new Promise(r => setTimeout(r, delay));
-      delay = Math.min(delay + 800, 8000);
-      continue;
+      if (!retryable(e) || ++softFails > MAX_SOFT_FAILS) {
+        // Surface the Venice error verbatim when we can; otherwise the message.
+        const detail = e?.data && (typeof e.data === 'object')
+          ? (e.data.error || e.data.message || JSON.stringify(e.data).slice(0, 200))
+          : (e?.message || 'Video generation failed');
+        const err = new Error(`Venice: ${detail} (${e?.status || 'network'})`);
+        err.status = e?.status;
+        err.cause = e;
+        throw err;
+      }
+      attemptFailed = true;
+      if (onTick) onTick(null, `reconnecting (${softFails}/${MAX_SOFT_FAILS})`);
     }
-    if (res && res.data) return res.data; // completed binary -> data URL
-    if (res && res.status === 'COMPLETED' && downloadUrl) {
-      try { const m = await api.fetchMedia(downloadUrl); if (m && m.data) return m.data; }
-      catch (e) { if (!retryable(e) || ++softFails > MAX_SOFT_FAILS) throw e; }
-      // delivery URL dropped — loop and retry it
+    if (!attemptFailed) {
+      // Binary completion → proxy wrapped as { data: 'data:…;base64,…', ... }.
+      if (res && res.data) return res.data;
+      // Some models / statuses surface a delivery URL via the queue response.
+      if (res && res.status === 'COMPLETED' && downloadUrl) {
+        try {
+          const m = await api.fetchMedia(downloadUrl);
+          if (m && m.data) return m.data;
+        } catch (e) {
+          if (!retryable(e) || ++softFails > MAX_SOFT_FAILS) throw e;
+          if (onTick) onTick(null, `reconnecting (${softFails}/${MAX_SOFT_FAILS})`);
+          // fall through to delay+continue
+        }
+      }
+      if (res && res.status && res.status !== 'COMPLETED' && onTick) {
+        const avg = res.average_execution_time || 0;
+        const cur = res.execution_duration || (Date.now() - started);
+        onTick(avg ? Math.min(0.97, cur / avg) : null, res.status);
+      }
     }
-    if (res && res.status && res.status !== 'COMPLETED' && onTick) {
-      const avg = res.average_execution_time || 0;
-      const cur = res.execution_duration || (Date.now() - started);
-      onTick(avg ? Math.min(0.97, cur / avg) : null, res.status);
-    }
-    await new Promise(r => setTimeout(r, delay));
-    delay = Math.min(delay + 800, 8000);
+    await new Promise(r => setTimeout(r, delay + jitter()));
+    delay = Math.min(delay + 600, 9000);
   }
-  throw new Error('Generation timed out. Try a shorter duration or lower resolution.');
+  throw new Error('Timed out waiting for Venice to render');
 }
